@@ -76,7 +76,7 @@ async function markAsPosted(rowIndex) {
 }
 
 // ============================================================
-// 楽天ROOMに投稿
+// 楽天ROOMに投稿（お気に入り経由）
 // ============================================================
 async function postToRakutenRoom(item) {
   const browser = await puppeteer.launch({
@@ -107,30 +107,99 @@ async function postToRakutenRoom(item) {
         page.click('input[type="submit"]'),
       ]);
       console.log('ログイン完了');
+      // ログイン後に少し待機
+      await new Promise(r => setTimeout(r, 3000));
     } catch (e) {
       console.log('ログインフォームなし（既にログイン済み）');
     }
 
-    // ② ROOMの投稿フォームに直接アクセス
-    const itemCode = item.itemCode;
-    const roomUrl = `https://room.rakuten.co.jp/mix/collect?itemcode=${itemCode}&scid=we_room_upc126`;
-    console.log(`ROOMに投稿URL: ${roomUrl}`);
-    await page.goto(roomUrl, { waitUntil: 'networkidle2' });
+    // ② 商品ページを開く
+    console.log(`商品ページを開く: ${item.itemName.substring(0, 30)}`);
+    await page.goto(item.itemUrl, { waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // スクリーンショット①（商品ページ）
+    await page.screenshot({ path: 'debug1.png', fullPage: false });
+    console.log('商品ページのスクリーンショット保存');
 
     // クーポンポップアップを閉じる
     try {
       const closeBtn = await page.$('[hint="ポップアップを閉じる"]');
-      if (closeBtn) await closeBtn.click();
+      if (closeBtn) {
+        await closeBtn.click();
+        console.log('ポップアップを閉じました');
+        await new Promise(r => setTimeout(r, 1000));
+      }
     } catch (e) {}
 
-    // ③ 投稿フォームに紹介文を入力
+    // ③ お気に入りボタンをクリック（複数のセレクタを試す）
+    console.log('お気に入りボタンを探しています...');
+    let bookmarkClicked = false;
+
+    const bookmarkSelectors = [
+      '.floatingBookmarkAreaWrapper',
+      '[data-ratid="item_bookmark"]',
+      '.bookmark-button',
+      'a[href*="my.bookmark.rakuten"]',
+      '.item-bookmark',
+    ];
+
+    for (const selector of bookmarkSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 3000 });
+        await page.click(selector);
+        console.log(`お気に入りボタンクリック成功: ${selector}`);
+        bookmarkClicked = true;
+        break;
+      } catch (e) {
+        console.log(`セレクタ未発見: ${selector}`);
+      }
+    }
+
+    if (!bookmarkClicked) {
+      // JavaScriptで全リンクを確認
+      const links = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('a')).map(a => ({
+          href: a.href,
+          text: a.textContent.trim().substring(0, 30),
+          className: a.className
+        })).filter(l => l.href.includes('bookmark') || l.text.includes('お気に入り'));
+      });
+      console.log('お気に入り関連リンク:', JSON.stringify(links.slice(0, 5)));
+
+      await page.screenshot({ path: 'debug2.png', fullPage: true });
+      console.log('お気に入りボタンが見つかりません。スキップします。');
+      await browser.close();
+      return false;
+    }
+
+    // ④ お気に入り一覧ページに遷移
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
+    console.log('お気に入り一覧URL:', page.url());
+    await new Promise(r => setTimeout(r, 2000));
+
+    // スクリーンショット②（お気に入り一覧）
+    await page.screenshot({ path: 'debug2.png', fullPage: true });
+    console.log('お気に入り一覧のスクリーンショット保存');
+
+    // ⑤ 「ROOMに投稿」ボタンを探してクリック
+    console.log('ROOMに投稿ボタンを探しています...');
+    try {
+      await page.waitForSelector('a[href*="room.rakuten.co.jp/mix/collect"]', {
+        timeout: 10000
+      });
+      await page.click('a[href*="room.rakuten.co.jp/mix/collect"]');
+      await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      console.log('ROOMに投稿フォームURL:', page.url());
+    } catch (e) {
+      console.log('ROOMに投稿ボタンが見つかりません');
+      await page.screenshot({ path: 'debug3.png', fullPage: true });
+      await browser.close();
+      return false;
+    }
+
+    // ⑥ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
-    console.log('現在のURL:', page.url());
-
-    // スクリーンショットを保存（デバッグ用）
-    await page.screenshot({ path: 'debug.png', fullPage: true });
-    console.log('スクリーンショット保存済み');
-
     try {
       await page.waitForSelector('#collect-content', { timeout: 10000 });
       await page.click('#collect-content');
@@ -138,20 +207,24 @@ async function postToRakutenRoom(item) {
         document.querySelector('#collect-content').value = text;
       }, item.postText);
     } catch (e) {
-      console.log(`投稿フォームが見つかりません: ${page.url()}`);
+      console.log('投稿フォームが見つかりません');
+      await page.screenshot({ path: 'debug3.png', fullPage: true });
       await browser.close();
       return false;
     }
 
-    // ④ 投稿ボタンをクリック
+    // ⑦ 投稿ボタンをクリック
     console.log('投稿中...');
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2' }),
       page.click('button[type="submit"]'),
     ]);
 
-    // ⑤ 投稿完了確認
+    // ⑧ 投稿完了確認
     const url = page.url();
+    console.log('投稿後URL:', url);
+    await page.screenshot({ path: 'debug_final.png', fullPage: false });
+
     if (url.includes('complete') || url.includes('room.rakuten.co.jp')) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await browser.close();
@@ -164,6 +237,7 @@ async function postToRakutenRoom(item) {
 
   } catch (e) {
     console.error(`エラー: ${e.message}`);
+    await page.screenshot({ path: 'debug_error.png', fullPage: true }).catch(() => {});
     await browser.close();
     return false;
   }
