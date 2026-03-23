@@ -7,7 +7,7 @@ const { google } = require('googleapis');
 const CONFIG = {
   RAKUTEN_EMAIL:    process.env.jyumaru.shidou@gmail.com,
   RAKUTEN_PASSWORD: process.env.e4KwbXGJH7aR,
-  SPREADSHEET_ID:   process.env.1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq,
+  SHEET_ID:   process.env.1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq,
 };
 
 // ============================================================
