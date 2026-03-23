@@ -184,6 +184,14 @@ async function postToRakutenRoom(item) {
 
     // ⑤ 「ROOMに投稿」を探してクリック
     console.log('ROOMに投稿を探しています...');
+    // ページ上の全リンクをログ出力（デバッグ用）
+const allLinks = await page.evaluate(() => {
+  return Array.from(document.querySelectorAll('a'))
+    .map(a => ({ text: a.textContent.trim().substring(0, 50), href: a.href.substring(0, 100) }))
+    .filter(l => l.text.length > 0);
+});
+console.log('ページ上のリンク一覧:');
+allLinks.forEach(l => console.log(`  [${l.text}] → ${l.href}`));
     try {
       await page.waitForSelector('a[href*="room.rakuten.co.jp/mix/collect"]', {
         timeout: 10000
