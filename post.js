@@ -14,15 +14,12 @@ const CONFIG = {
 // Googleスプレッドシートから未投稿の商品を取得
 // ============================================================
 async function getUnpostedItems() {
-  // base64をデコードしてJSONに戻す
   const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT, 'base64').toString('utf8');
   const credentials = JSON.parse(decoded);
-  
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
-  // 以下は変更なし...
 
   const sheets = google.sheets({ version: 'v4', auth });
   const res = await sheets.spreadsheets.values.get({
@@ -31,7 +28,6 @@ async function getUnpostedItems() {
   });
 
   const rows = res.data.values || [];
-  const header = rows[0];
   const items = [];
 
   for (let i = 1; i < rows.length; i++) {
@@ -39,7 +35,7 @@ async function getUnpostedItems() {
     const status = row[7] || '未投稿';
     if (status === '未投稿') {
       items.push({
-        rowIndex: i + 1, // スプレッドシートの行番号（1始まり）
+        rowIndex: i + 1,
         date:      row[0],
         category:  row[1],
         itemCode:  row[2],
@@ -61,7 +57,7 @@ async function getUnpostedItems() {
 async function markAsPosted(rowIndex) {
   const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT, 'base64').toString('utf8');
   const credentials = JSON.parse(decoded);
-  // 以下は変更なし...
+  const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
