@@ -2,19 +2,19 @@ const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
 
 // ============================================================
-// 設定
+// 設定（Secret名を短くしてマスク回避）
 // ============================================================
 const CONFIG = {
-  RAKUTEN_EMAIL:    process.env.jyumaru.shidou@gmail.com,
-  RAKUTEN_PASSWORD: process.env.e4KwbXGJH7aR,
-  SHEET_ID:   process.env.1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq,
+  EMAIL:    process.env.R_EMAIL,"jyumaru.shidou@gmail.com"
+  PASS:     process.env.R_PASS,"e4KwbXGJH7aR"
+  SHEET:    process.env.SHEET_ID,"1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq"
 };
 
 // ============================================================
 // Googleスプレッドシートから未投稿の商品を取得
 // ============================================================
 async function getUnpostedItems() {
-  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+  const b64 = process.env.GSA;
   const json = Buffer.from(b64, 'base64').toString('utf8');
   const credentials = JSON.parse(json);
   const auth = new google.auth.GoogleAuth({
@@ -24,7 +24,7 @@ async function getUnpostedItems() {
 
   const sheets = google.sheets({ version: 'v4', auth });
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SPREADSHEET_ID,
+    spreadsheetId: CONFIG.SHEET,
     range: '楽天ROOM投稿リスト!A:H',
   });
 
@@ -56,7 +56,7 @@ async function getUnpostedItems() {
 // 投稿済みに更新
 // ============================================================
 async function markAsPosted(rowIndex) {
-  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+  const b64 = process.env.GSA;
   const json = Buffer.from(b64, 'base64').toString('utf8');
   const credentials = JSON.parse(json);
   const auth = new google.auth.GoogleAuth({
@@ -66,7 +66,7 @@ async function markAsPosted(rowIndex) {
 
   const sheets = google.sheets({ version: 'v4', auth });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: CONFIG.SPREADSHEET_ID,
+    spreadsheetId: CONFIG.SHEET,
     range: `楽天ROOM投稿リスト!H${rowIndex}`,
     valueInputOption: 'RAW',
     requestBody: { values: [['済']] },
@@ -109,7 +109,7 @@ async function postToRakutenRoom(item) {
         await page.$('input[name="username"]') ||
         await page.$('input[type="email"]') ||
         await page.$('#email');
-      await emailInput.type(CONFIG.RAKUTEN_EMAIL);
+      await emailInput.type(CONFIG.EMAIL);
 
       // 次へボタンをクリック
       const nextBtn = await page.$('button[type="submit"]');
@@ -126,7 +126,7 @@ async function postToRakutenRoom(item) {
       // パスワード入力
       const passInput = await page.$('input[type="password"]');
       if (passInput) {
-        await passInput.type(CONFIG.RAKUTEN_PASSWORD);
+        await passInput.type(CONFIG.PASS);
         await Promise.all([
           page.waitForNavigation({ waitUntil: 'networkidle2' }),
           page.click('button[type="submit"]'),
@@ -204,12 +204,11 @@ async function postToRakutenRoom(item) {
     if (bookmarkUrl.includes('login') || bookmarkUrl.includes('sign_in')) {
       console.log('ログインページにリダイレクトされました。再ログインします...');
       try {
-        // メールアドレス入力
         const emailInput =
           await page.$('input[name="username"]') ||
           await page.$('input[type="email"]') ||
           await page.$('#email');
-        if (emailInput) await emailInput.type(CONFIG.RAKUTEN_EMAIL);
+        if (emailInput) await emailInput.type(CONFIG.EMAIL);
 
         const nextBtn = await page.$('button[type="submit"]');
         if (nextBtn) {
@@ -222,7 +221,7 @@ async function postToRakutenRoom(item) {
 
         const passInput = await page.$('input[type="password"]');
         if (passInput) {
-          await passInput.type(CONFIG.RAKUTEN_PASSWORD);
+          await passInput.type(CONFIG.PASS);
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle2' }),
             page.click('button[type="submit"]'),

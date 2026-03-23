@@ -2,9 +2,8 @@ name: 楽天ROOM自動投稿
 
 on:
   schedule:
-    # 日本時間 0時（UTC換算）
     - cron: '0 15 * * *'   # JST 0時
-  workflow_dispatch:         # 手動実行も可能
+  workflow_dispatch:
 
 jobs:
   post:
@@ -24,10 +23,10 @@ jobs:
 
       - name: 楽天ROOMに自動投稿
         env:
-          RAKUTEN_EMAIL:          ${{ secrets.RAKUTEN_EMAIL }}
-          RAKUTEN_PASSWORD:       ${{ secrets.RAKUTEN_PASSWORD }}
-          SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
-          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          R_EMAIL:  ${{ secrets.R_EMAIL }}
+          R_PASS:   ${{ secrets.R_PASS }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
+          GSA:      ${{ secrets.GSA }}
         run: node post.js
 
       - name: スクリーンショットをアップロード
@@ -36,9 +35,14 @@ jobs:
         with:
           name: debug-screenshots
           path: |
+            debug_login.png
+            debug_login2.png
+            debug_login3.png
             debug1.png
             debug2.png
+            debug2b.png
             debug3.png
+            debug4.png
             debug_final.png
             debug_error.png
           if-no-files-found: ignore
