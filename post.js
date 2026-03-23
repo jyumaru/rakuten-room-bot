@@ -1,5 +1,5 @@
-const puppeteer = require('puppeteer');
-const { google } = require('googleapis');
+const raw = process.env.GOOGLE_SERVICE_ACCOUNT;
+const credentials = JSON.parse(raw);
 
 // ============================================================
 // 設定
