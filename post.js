@@ -182,8 +182,8 @@ async function postToRakutenRoom(item) {
     await page.screenshot({ path: 'debug2.png', fullPage: true });
     console.log('お気に入り一覧のスクリーンショット保存');
 
-    // ⑤ 「ROOMに投稿」ボタンを探してクリック
-    console.log('ROOMに投稿ボタンを探しています...');
+    // ⑤ 「ROOMに投稿」を探してクリック
+    console.log('ROOMに投稿を探しています...');
     try {
       await page.waitForSelector('a[href*="room.rakuten.co.jp/mix/collect"]', {
         timeout: 10000
