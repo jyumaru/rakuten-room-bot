@@ -1,5 +1,6 @@
-const raw = process.env.GOOGLE_SERVICE_ACCOUNT;
-const credentials = JSON.parse(raw);
+const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+const json = Buffer.from(b64, 'base64').toString('utf8');
+const credentials = JSON.parse(json);
 
 // ============================================================
 // 設定
