@@ -1,0 +1,13 @@
+{
+  "name": "rakuten-room-bot",
+  "version": "1.0.0",
+  "description": "楽天ROOM自動投稿ボット",
+  "main": "post.js",
+  "scripts": {
+    "start": "node post.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0",
+    "googleapis": "^144.0.0"
+  }
+}
