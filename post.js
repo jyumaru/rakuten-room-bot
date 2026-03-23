@@ -5,9 +5,9 @@ const { google } = require('googleapis');
 // 設定
 // ============================================================
 const CONFIG = {
-  RAKUTEN_EMAIL:    process.env.RAKUTEN_EMAIL,
-  RAKUTEN_PASSWORD: process.env.RAKUTEN_PASSWORD,
-  SPREADSHEET_ID:   process.env.SPREADSHEET_ID,
+  RAKUTEN_EMAIL:    process.env.jyumaru.shidou@gmail.com,
+  RAKUTEN_PASSWORD: process.env.e4KwbXGJH7aR,
+  SPREADSHEET_ID:   process.env.1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq,
 };
 
 // ============================================================
