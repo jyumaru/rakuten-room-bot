@@ -1,0 +1,204 @@
+const puppeteer = require('puppeteer');
+const { google } = require('googleapis');
+
+// ============================================================
+// 設定
+// ============================================================
+const CONFIG = {
+  RAKUTEN_EMAIL:    process.env.RAKUTEN_EMAIL,
+  RAKUTEN_PASSWORD: process.env.RAKUTEN_PASSWORD,
+  SPREADSHEET_ID:   process.env.SPREADSHEET_ID,
+};
+
+// ============================================================
+// Googleスプレッドシートから未投稿の商品を取得
+// ============================================================
+async function getUnpostedItems() {
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+  const json = Buffer.from(b64, 'base64').toString('utf8');
+  const credentials = JSON.parse(json);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+
+  const sheets = google.sheets({ version: 'v4', auth });
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: CONFIG.SPREADSHEET_ID,
+    range: '楽天ROOM投稿リスト!A:H',
+  });
+
+  const rows = res.data.values || [];
+  const items = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const status = row[7] || '未投稿';
+    if (status === '未投稿') {
+      items.push({
+        rowIndex: i + 1,
+        date:      row[0],
+        category:  row[1],
+        itemCode:  row[2],
+        itemName:  row[3],
+        price:     row[4],
+        itemUrl:   row[5],
+        postText:  row[6],
+      });
+    }
+  }
+
+  console.log(`未投稿件数: ${items.length}件`);
+  return items;
+}
+
+// ============================================================
+// 投稿済みに更新
+// ============================================================
+async function markAsPosted(rowIndex) {
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+  const json = Buffer.from(b64, 'base64').toString('utf8');
+  const credentials = JSON.parse(json);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+  });
+
+  const sheets = google.sheets({ version: 'v4', auth });
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: CONFIG.SPREADSHEET_ID,
+    range: `楽天ROOM投稿リスト!H${rowIndex}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['済']] },
+  });
+
+  console.log(`行${rowIndex}を「済」に更新しました`);
+}
+
+// ============================================================
+// 楽天ROOMに投稿
+// ============================================================
+async function postToRakutenRoom(item) {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+    ],
+  });
+
+  const page = await browser.newPage();
+  page.setDefaultTimeout(30000);
+
+  try {
+    // ① 楽天にログイン
+    console.log('楽天にログイン中...');
+    await page.goto('https://grp01.id.rakuten.co.jp/rms/nid/login', {
+      waitUntil: 'networkidle2'
+    });
+
+    try {
+      await page.waitForSelector('input[name="u"]', { timeout: 5000 });
+      await page.type('input[name="u"]', CONFIG.RAKUTEN_EMAIL);
+      await page.type('input[name="p"]', CONFIG.RAKUTEN_PASSWORD);
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle2' }),
+        page.click('input[type="submit"]'),
+      ]);
+      console.log('ログイン完了');
+    } catch (e) {
+      console.log('ログインフォームなし（既にログイン済み）');
+    }
+
+    // ② ROOMの投稿フォームに直接アクセス
+    const itemCode = item.itemCode;
+    const roomUrl = `https://room.rakuten.co.jp/mix/collect?itemcode=${itemCode}&scid=we_room_upc126`;
+    console.log(`ROOMに投稿URL: ${roomUrl}`);
+    await page.goto(roomUrl, { waitUntil: 'networkidle2' });
+
+    // クーポンポップアップを閉じる
+    try {
+      const closeBtn = await page.$('[hint="ポップアップを閉じる"]');
+      if (closeBtn) await closeBtn.click();
+    } catch (e) {}
+
+    // ③ 投稿フォームに紹介文を入力
+    console.log('紹介文を入力中...');
+    console.log('現在のURL:', page.url());
+
+    // スクリーンショットを保存（デバッグ用）
+    await page.screenshot({ path: 'debug.png', fullPage: true });
+    console.log('スクリーンショット保存済み');
+
+    try {
+      await page.waitForSelector('#collect-content', { timeout: 10000 });
+      await page.click('#collect-content');
+      await page.evaluate((text) => {
+        document.querySelector('#collect-content').value = text;
+      }, item.postText);
+    } catch (e) {
+      console.log(`投稿フォームが見つかりません: ${page.url()}`);
+      await browser.close();
+      return false;
+    }
+
+    // ④ 投稿ボタンをクリック
+    console.log('投稿中...');
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle2' }),
+      page.click('button[type="submit"]'),
+    ]);
+
+    // ⑤ 投稿完了確認
+    const url = page.url();
+    if (url.includes('complete') || url.includes('room.rakuten.co.jp')) {
+      console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
+      await browser.close();
+      return true;
+    } else {
+      console.log(`❌ 投稿失敗: ${url}`);
+      await browser.close();
+      return false;
+    }
+
+  } catch (e) {
+    console.error(`エラー: ${e.message}`);
+    await browser.close();
+    return false;
+  }
+}
+
+// ============================================================
+// メイン処理
+// ============================================================
+async function main() {
+  console.log('=== 楽天ROOM自動投稿開始 ===');
+
+  const items = await getUnpostedItems();
+
+  if (items.length === 0) {
+    console.log('未投稿の商品がありません');
+    return;
+  }
+
+  // 1回の実行で最大3件投稿（負荷軽減）
+  const targetItems = items.slice(0, 3);
+
+  for (const item of targetItems) {
+    console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
+
+    const success = await postToRakutenRoom(item);
+
+    if (success) {
+      await markAsPosted(item.rowIndex);
+    }
+
+    // 投稿間隔を空ける（連続投稿対策）
+    await new Promise(r => setTimeout(r, 5000));
+  }
+
+  console.log('\n=== 楽天ROOM自動投稿完了 ===');
+}
+
+main().catch(console.error);
