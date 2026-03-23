@@ -15,8 +15,14 @@ const CONFIG = {
 // Googleスプレッドシートから未投稿の商品を取得
 // ============================================================
 async function getUnpostedItems() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT.replace(/\\n/g, '\n');
-  const credentials = JSON.parse(raw);
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+  console.log('Secret長さ:', b64.length);
+  console.log('先頭20文字:', b64.substring(0, 20));
+  
+  const json = Buffer.from(b64, 'base64').toString('utf8');
+  console.log('デコード後先頭50文字:', json.substring(0, 50));
+  
+  const credentials = JSON.parse(json);
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
