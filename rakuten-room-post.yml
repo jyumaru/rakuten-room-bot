@@ -2,7 +2,7 @@ name: 楽天ROOM自動投稿
 
 on:
   schedule:
-    - cron: '0 15 * * *'   # JST 0時
+     - cron: '0 15 * * *'   # JST 0時
   workflow_dispatch:
 
 jobs:
