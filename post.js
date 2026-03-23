@@ -14,8 +14,8 @@ const CONFIG = {
 // Googleスプレッドシートから未投稿の商品を取得
 // ============================================================
 async function getUnpostedItems() {
-  const decoded = Buffer.from(process.env.GOOGLE_SERVICE_ACCOUNT, 'base64').toString('utf8');
-  const credentials = JSON.parse(decoded);
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT.replace(/\\n/g, '\n');
+  const credentials = JSON.parse(raw);
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -178,6 +178,8 @@ async function postToRakutenRoom(item) {
 async function main() {
   console.log('=== 楽天ROOM自動投稿開始 ===');
 
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT.replace(/\\n/g, '\n');
+  const credentials = JSON.parse(raw);
   const items = await getUnpostedItems();
 
   if (items.length === 0) {
