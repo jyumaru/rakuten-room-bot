@@ -125,6 +125,12 @@ async function postToRakutenRoom(item) {
 
     // ③ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
+    console.log('現在のURL:', page.url());
+
+    // スクリーンショットを保存（デバッグ用）
+    await page.screenshot({ path: 'debug.png', fullPage: true });
+    console.log('スクリーンショット保存済み');
+
     try {
       await page.waitForSelector('#collect-content', { timeout: 10000 });
       await page.click('#collect-content');
