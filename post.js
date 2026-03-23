@@ -183,6 +183,21 @@ async function postToRakutenRoom(item) {
     console.log('お気に入り一覧のスクリーンショット保存');
 
     // ⑤ 「ROOMに投稿」を探してクリック
+    // ボタン・リンク・クリッカブル要素を全て出力
+const allElements = await page.evaluate(() => {
+  const elements = Array.from(document.querySelectorAll('a, button, [onclick], [data-*]'));
+  return elements
+    .map(el => ({
+      tag: el.tagName,
+      text: el.textContent.trim().substring(0, 50),
+      href: el.href || '',
+      onclick: el.getAttribute('onclick') || '',
+      dataAttrs: Object.keys(el.dataset).join(','),
+      className: el.className.substring(0, 50)
+    }))
+    .filter(el => el.text.includes('ROOM') || el.text.includes('コレ') || el.text.includes('投稿'));
+});
+console.log('ROOM関連要素:', JSON.stringify(allElements, null, 2));
     console.log('ROOMに投稿を探しています...');
     // ページ上の全リンクをログ出力（デバッグ用）
 const allLinks = await page.evaluate(() => {
