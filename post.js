@@ -6,7 +6,7 @@ const { google } = require('googleapis');
 // ============================================================
 const CONFIG = {
   EMAIL:    process.env.R_EMAIL,"jyumaru.shidou@gmail.com"
-  PASS:     process.env.R_PASS,e4KwbXGJH7aR
+  PASS:     process.env.R_PASS,"e4KwbXGJH7aR"
   SHEET:    process.env.SHEET_ID,"1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq"
 };
 
