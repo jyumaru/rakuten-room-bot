@@ -1,6 +1,3 @@
-const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
-const json = Buffer.from(b64, 'base64').toString('utf8');
-const credentials = JSON.parse(json);
 const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
 
@@ -59,8 +56,9 @@ async function getUnpostedItems() {
 // 投稿済みに更新
 // ============================================================
 async function markAsPosted(rowIndex) {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT.replace(/\\n/g, '\n');
-  const credentials = JSON.parse(raw);
+  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT;
+  const json = Buffer.from(b64, 'base64').toString('utf8');
+  const credentials = JSON.parse(json);
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -96,13 +94,12 @@ async function postToRakutenRoom(item) {
   try {
     // ① 楽天にログイン
     console.log('楽天にログイン中...');
-    await page.goto('https://www.rakuten.co.jp/myrakuten/', {
+    await page.goto('https://grp01.id.rakuten.co.jp/rms/nid/login', {
       waitUntil: 'networkidle2'
     });
 
-    // ログインフォームがあれば入力
-    const loginForm = await page.$('input[name="u"]');
-    if (loginForm) {
+    try {
+      await page.waitForSelector('input[name="u"]', { timeout: 5000 });
       await page.type('input[name="u"]', CONFIG.RAKUTEN_EMAIL);
       await page.type('input[name="p"]', CONFIG.RAKUTEN_PASSWORD);
       await Promise.all([
@@ -110,11 +107,15 @@ async function postToRakutenRoom(item) {
         page.click('input[type="submit"]'),
       ]);
       console.log('ログイン完了');
+    } catch (e) {
+      console.log('ログインフォームなし（既にログイン済み）');
     }
 
-    // ② 商品ページを開く
-    console.log(`商品ページを開く: ${item.itemName.substring(0, 30)}`);
-    await page.goto(item.itemUrl, { waitUntil: 'networkidle2' });
+    // ② ROOMの投稿フォームに直接アクセス
+    const itemCode = item.itemCode;
+    const roomUrl = `https://room.rakuten.co.jp/mix/collect?itemcode=${itemCode}&scid=we_room_upc126`;
+    console.log(`ROOMに投稿URL: ${roomUrl}`);
+    await page.goto(roomUrl, { waitUntil: 'networkidle2' });
 
     // クーポンポップアップを閉じる
     try {
@@ -122,42 +123,28 @@ async function postToRakutenRoom(item) {
       if (closeBtn) await closeBtn.click();
     } catch (e) {}
 
-    // ③ お気に入りボタンをクリック
-    console.log('お気に入りに追加中...');
+    // ③ 投稿フォームに紹介文を入力
+    console.log('紹介文を入力中...');
     try {
-      await page.waitForSelector('.floatingBookmarkAreaWrapper', { timeout: 5000 });
-      await page.click('.floatingBookmarkAreaWrapper');
-      await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      await page.waitForSelector('#collect-content', { timeout: 10000 });
+      await page.click('#collect-content');
+      await page.evaluate((text) => {
+        document.querySelector('#collect-content').value = text;
+      }, item.postText);
     } catch (e) {
-      console.log('お気に入りボタンが見つからないためスキップ');
+      console.log(`投稿フォームが見つかりません: ${page.url()}`);
       await browser.close();
       return false;
     }
 
-    // ④ お気に入り一覧から「ROOMに投稿」をクリック
-    console.log('ROOMに投稿ボタンを探しています...');
-    await page.waitForSelector('a[href*="room.rakuten.co.jp/mix/collect"]', {
-      timeout: 10000
-    });
-    await page.click('a[href*="room.rakuten.co.jp/mix/collect"]');
-    await page.waitForNavigation({ waitUntil: 'networkidle2' });
-
-    // ⑤ 投稿フォームに紹介文を入力
-    console.log('紹介文を入力中...');
-    await page.waitForSelector('#collect-content', { timeout: 10000 });
-    await page.click('#collect-content');
-    await page.evaluate((text) => {
-      document.querySelector('#collect-content').value = text;
-    }, item.postText);
-
-    // ⑥ 投稿ボタンをクリック
+    // ④ 投稿ボタンをクリック
     console.log('投稿中...');
     await Promise.all([
       page.waitForNavigation({ waitUntil: 'networkidle2' }),
       page.click('button[type="submit"]'),
     ]);
 
-    // ⑦ 投稿完了確認
+    // ⑤ 投稿完了確認
     const url = page.url();
     if (url.includes('complete') || url.includes('room.rakuten.co.jp')) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
