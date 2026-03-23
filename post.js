@@ -76,7 +76,7 @@ async function markAsPosted(rowIndex) {
 }
 
 // ============================================================
-// 楽天ROOMに投稿（お気に入り経由）
+// 楽天ROOMに投稿（お気に入りブックマーク経由）
 // ============================================================
 async function postToRakutenRoom(item) {
   const browser = await puppeteer.launch({
@@ -94,7 +94,7 @@ async function postToRakutenRoom(item) {
   try {
     // ① 楽天にログイン
     console.log('楽天にログイン中...');
-    await page.goto('https://grp01.id.rakuten.co.jp/rms/nid/login', {
+    await page.goto('https://grp01.id.rakuten.co.jp/rms/nid/login?service_id=top', {
       waitUntil: 'networkidle2'
     });
 
@@ -107,41 +107,45 @@ async function postToRakutenRoom(item) {
         page.click('input[type="submit"]'),
       ]);
       console.log('ログイン完了');
-      // ログイン後に少し待機
       await new Promise(r => setTimeout(r, 3000));
+
+      // ログインクッキーを確認
+      const cookies = await page.cookies();
+      const rSession = cookies.find(c => c.name === 'Rlogin' || c.name === 'r_session');
+      console.log('ログインクッキー:', rSession ? '取得成功' : '取得失敗');
+      console.log('クッキー数:', cookies.length);
+
     } catch (e) {
-      console.log('ログインフォームなし（既にログイン済み）');
+      console.log('ログインエラー:', e.message);
     }
 
     // ② 商品ページを開く
     console.log(`商品ページを開く: ${item.itemName.substring(0, 30)}`);
     await page.goto(item.itemUrl, { waitUntil: 'networkidle2' });
     await new Promise(r => setTimeout(r, 2000));
-
-    // スクリーンショット①（商品ページ）
     await page.screenshot({ path: 'debug1.png', fullPage: false });
-    console.log('商品ページのスクリーンショット保存');
 
     // クーポンポップアップを閉じる
     try {
       const closeBtn = await page.$('[hint="ポップアップを閉じる"]');
       if (closeBtn) {
         await closeBtn.click();
-        console.log('ポップアップを閉じました');
         await new Promise(r => setTimeout(r, 1000));
+        console.log('ポップアップを閉じました');
       }
     } catch (e) {}
 
-    // ③ お気に入りボタンをクリック（複数のセレクタを試す）
-    console.log('お気に入りボタンを探しています...');
+    // ③ お気に入りボタンをクリック
+    console.log('お気に入りボタンをクリック中...');
     let bookmarkClicked = false;
 
     const bookmarkSelectors = [
       '.floatingBookmarkAreaWrapper',
       '[data-ratid="item_bookmark"]',
-      '.bookmark-button',
       'a[href*="my.bookmark.rakuten"]',
-      '.item-bookmark',
+      '.bookmark-button',
+      'button[class*="bookmark"]',
+      'a[class*="bookmark"]',
     ];
 
     for (const selector of bookmarkSelectors) {
@@ -157,103 +161,145 @@ async function postToRakutenRoom(item) {
     }
 
     if (!bookmarkClicked) {
-      // JavaScriptで全リンクを確認
-      const links = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('a')).map(a => ({
-          href: a.href,
-          text: a.textContent.trim().substring(0, 30),
-          className: a.className
-        })).filter(l => l.href.includes('bookmark') || l.text.includes('お気に入り'));
-      });
-      console.log('お気に入り関連リンク:', JSON.stringify(links.slice(0, 5)));
-
-      await page.screenshot({ path: 'debug2.png', fullPage: true });
       console.log('お気に入りボタンが見つかりません。スキップします。');
+      await page.screenshot({ path: 'debug_no_bookmark.png', fullPage: true });
       await browser.close();
       return false;
     }
 
-    // ④ お気に入り一覧ページに遷移
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
-    console.log('お気に入り一覧URL:', page.url());
+    // ④ お気に入りブックマークページへの遷移を待つ
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
     await new Promise(r => setTimeout(r, 2000));
-
-    // スクリーンショット②（お気に入り一覧）
+    const bookmarkUrl = page.url();
+    console.log('遷移先URL:', bookmarkUrl);
     await page.screenshot({ path: 'debug2.png', fullPage: true });
-    console.log('お気に入り一覧のスクリーンショット保存');
 
-    // ⑤ 「ROOMに投稿」を探してクリック
-    // ボタン・リンク・クリッカブル要素を全て出力
-const allElements = await page.evaluate(() => {
-  const elements = Array.from(document.querySelectorAll('a, button, [onclick], [data-*]'));
-  return elements
-    .map(el => ({
-      tag: el.tagName,
-      text: el.textContent.trim().substring(0, 50),
-      href: el.href || '',
-      onclick: el.getAttribute('onclick') || '',
-      dataAttrs: Object.keys(el.dataset).join(','),
-      className: el.className.substring(0, 50)
-    }))
-    .filter(el => el.text.includes('ROOM') || el.text.includes('コレ') || el.text.includes('投稿'));
-});
-console.log('ROOM関連要素:', JSON.stringify(allElements, null, 2));
-    console.log('ROOMに投稿を探しています...');
-    // ページ上の全リンクをログ出力（デバッグ用）
-const allLinks = await page.evaluate(() => {
-  return Array.from(document.querySelectorAll('a'))
-    .map(a => ({ text: a.textContent.trim().substring(0, 50), href: a.href.substring(0, 100) }))
-    .filter(l => l.text.length > 0);
-});
-console.log('ページ上のリンク一覧:');
-allLinks.forEach(l => console.log(`  [${l.text}] → ${l.href}`));
+    // ログインページに飛ばされた場合は再ログイン
+    if (bookmarkUrl.includes('login') || bookmarkUrl.includes('sign_in')) {
+      console.log('ログインページにリダイレクトされました。再ログインします...');
+      try {
+        await page.waitForSelector('input[name="u"]', { timeout: 5000 });
+        await page.type('input[name="u"]', CONFIG.RAKUTEN_EMAIL);
+        await page.type('input[name="p"]', CONFIG.RAKUTEN_PASSWORD);
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'networkidle2' }),
+          page.click('input[type="submit"]'),
+        ]);
+        console.log('再ログイン完了');
+        await new Promise(r => setTimeout(r, 3000));
+        console.log('再ログイン後URL:', page.url());
+        await page.screenshot({ path: 'debug2b.png', fullPage: true });
+      } catch (e) {
+        console.log('再ログイン失敗:', e.message);
+        await browser.close();
+        return false;
+      }
+    }
+
+    // ⑤ ROOM関連要素を探す（デバッグ用ログ）
+    console.log('ROOM関連要素を検索中...');
+    const allElements = await page.evaluate(() => {
+      const elements = Array.from(document.querySelectorAll('a, button, [onclick]'));
+      return elements
+        .map(el => ({
+          tag: el.tagName,
+          text: el.textContent.trim().substring(0, 50),
+          href: el.href || '',
+          onclick: el.getAttribute('onclick') || '',
+          className: el.className.substring(0, 50)
+        }))
+        .filter(el =>
+          el.text.includes('ROOM') ||
+          el.text.includes('コレ') ||
+          el.text.includes('投稿') ||
+          el.href.includes('room.rakuten')
+        );
+    });
+    console.log('ROOM関連要素:', JSON.stringify(allElements, null, 2));
+
+    // ⑥ 「ROOMに投稿」リンクをクリック
+    console.log('ROOMに投稿リンクをクリック中...');
     try {
-      await page.waitForSelector('a[href*="room.rakuten.co.jp/mix/collect"]', {
-        timeout: 10000
+      // hrefにroom.rakutenが含まれるリンクを探す
+      const clicked = await page.evaluate(() => {
+        const links = Array.from(document.querySelectorAll('a'));
+        const roomLink = links.find(a =>
+          a.href.includes('room.rakuten.co.jp/mix/collect') ||
+          a.textContent.includes('ROOMに投稿') ||
+          a.textContent.includes('コレ！')
+        );
+        if (roomLink) {
+          roomLink.click();
+          return roomLink.href;
+        }
+        return null;
       });
-      await page.click('a[href*="room.rakuten.co.jp/mix/collect"]');
-      await page.waitForNavigation({ waitUntil: 'networkidle2' });
-      console.log('ROOMに投稿フォームURL:', page.url());
+
+      if (clicked) {
+        console.log('ROOMリンククリック成功:', clicked);
+        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 2000));
+      } else {
+        console.log('ROOMに投稿リンクが見つかりません');
+        await page.screenshot({ path: 'debug3.png', fullPage: true });
+        await browser.close();
+        return false;
+      }
     } catch (e) {
-      console.log('ROOMに投稿ボタンが見つかりません');
-      await page.screenshot({ path: 'debug3.png', fullPage: true });
+      console.log('ROOMリンククリックエラー:', e.message);
       await browser.close();
       return false;
     }
 
-    // ⑥ 投稿フォームに紹介文を入力
+    console.log('ROOMコレクトフォームURL:', page.url());
+    await page.screenshot({ path: 'debug3.png', fullPage: true });
+
+    // ⑦ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await page.waitForSelector('#collect-content', { timeout: 10000 });
-      await page.click('#collect-content');
+      await page.evaluate(() => {
+        document.querySelector('#collect-content').value = '';
+      });
       await page.evaluate((text) => {
         document.querySelector('#collect-content').value = text;
       }, item.postText);
+      console.log('紹介文の入力完了');
     } catch (e) {
-      console.log('投稿フォームが見つかりません');
-      await page.screenshot({ path: 'debug3.png', fullPage: true });
+      console.log('投稿フォームが見つかりません:', page.url());
+      await page.screenshot({ path: 'debug_no_form.png', fullPage: true });
       await browser.close();
       return false;
     }
 
-    // ⑦ 投稿ボタンをクリック
-    console.log('投稿中...');
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2' }),
-      page.click('button[type="submit"]'),
-    ]);
+    await page.screenshot({ path: 'debug4.png', fullPage: false });
 
-    // ⑧ 投稿完了確認
-    const url = page.url();
-    console.log('投稿後URL:', url);
+    // ⑧ 「完了」ボタンをクリック
+    console.log('「完了」ボタンをクリック中...');
+    try {
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }),
+        page.click('button[type="submit"]'),
+      ]);
+    } catch (e) {
+      console.log('ナビゲーションなしで投稿完了の可能性:', e.message);
+    }
+
+    // ⑨ 投稿完了確認
+    const finalUrl = page.url();
+    console.log('投稿後URL:', finalUrl);
     await page.screenshot({ path: 'debug_final.png', fullPage: false });
 
-    if (url.includes('complete') || url.includes('room.rakuten.co.jp')) {
+    if (
+      finalUrl.includes('complete') ||
+      finalUrl.includes('room.rakuten.co.jp') ||
+      finalUrl.includes('collect')
+    ) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await browser.close();
       return true;
     } else {
-      console.log(`❌ 投稿失敗: ${url}`);
+      console.log(`❌ 投稿失敗: ${finalUrl}`);
       await browser.close();
       return false;
     }
