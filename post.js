@@ -171,7 +171,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
     console.log('パスワードを入力中...');
     await passInput.clear();
 
-    // パスワードを1文字ずつ入力（特殊文字対策）
     for (const char of CONFIG.PASS) {
       await passInput.sendKeys(char);
       await sleep(50);
@@ -259,31 +258,7 @@ async function postToRakutenRoom(item) {
       console.log('ポップアップを閉じました');
     } catch (e) {}
 
-    // ⑤ お気に入り関連要素を調査
-    console.log('お気に入り関連要素を調査中...');
-    const bookmarkInfo = await driver.executeScript(() => {
-      const els = Array.from(document.querySelectorAll('a, button, span, div'));
-      return els
-        .map(el => ({
-          tag: el.tagName,
-          text: el.textContent.trim().substring(0, 40),
-          href: el.href || '',
-          className: el.className.substring(0, 80),
-          id: el.id || '',
-          dataRatid: el.getAttribute('data-ratid') || '',
-        }))
-        .filter(el =>
-          el.text.includes('お気に入り') ||
-          el.text.includes('ブックマーク') ||
-          el.className.toLowerCase().includes('bookmark') ||
-          el.className.toLowerCase().includes('favorite') ||
-          el.dataRatid.includes('bookmark') ||
-          el.href.includes('bookmark')
-        );
-    });
-    console.log('お気に入り関連要素:', JSON.stringify(bookmarkInfo, null, 2));
-
-    // ⑥ お気に入りボタンをクリック
+    // ⑤ お気に入りボタンをクリック
     console.log('お気に入りボタンをクリック中...');
     let bookmarkClicked = false;
 
@@ -291,6 +266,7 @@ async function postToRakutenRoom(item) {
       '[data-ratid="item_bookmark"]',
       '[data-ratid*="bookmark"]',
       '.floatingBookmarkAreaWrapper',
+      '.itemBookmarkAreaWrapper',
       '[class*="Bookmark"]',
       '[class*="bookmark"]',
     ];
@@ -330,7 +306,7 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    // お気に入りページへのリダイレクトを待つ
+    // ⑥ お気に入りページへのリダイレクトを待つ
     console.log('お気に入りページへのリダイレクト待機中...');
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
@@ -372,8 +348,7 @@ async function postToRakutenRoom(item) {
     });
     console.log('ROOM関連要素:', JSON.stringify(roomElements, null, 2));
 
-    // ⑧ 「ROOMに追加」をクリック
-    console.log('ROOMに追加リンクをクリック中...');
+    // ⑧ 「ROOMに投稿」リンクを取得してURLを変換
     const roomLink = await driver.executeScript(() => {
       const links = Array.from(document.querySelectorAll('a, button, [onclick]'));
       const link = links.find(a =>
@@ -419,24 +394,37 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ OKポップアップを閉じる
-    try {
-      const okBtn = await driver.findElement(By.xpath('//button[text()="OK"]'));
-      await driver.executeScript('arguments[0].click();', okBtn);
-      await sleep(1000);
-      console.log('OKポップアップを閉じました');
-      await screenshot(driver, 'debug3b.png');
-    } catch (e) {
-      console.log('OKポップアップなし');
+    // ⑨ OKポップアップをJSで確実に閉じる
+    console.log('OKポップアップを閉じます...');
+    await sleep(1000);
+
+    // 最大3回試みる
+    for (let i = 0; i < 3; i++) {
+      const popupClosed = await driver.executeScript(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const okBtn = buttons.find(b => b.textContent.trim() === 'OK');
+        if (okBtn) {
+          okBtn.click();
+          return true;
+        }
+        return false;
+      });
+      if (popupClosed) {
+        console.log(`OKポップアップを閉じました（${i + 1}回目）`);
+        await sleep(1000);
+      } else {
+        break;
+      }
     }
+
+    await screenshot(driver, 'debug3b.png');
 
     // ⑩ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
-      const textarea = await driver.findElement(By.id('collect-content'));
 
-      // テキストをセットしてイベントを発火（文字数カウンター更新）
+      // テキストをセットしてイベントを発火
       await driver.executeScript(`
         const el = document.querySelector('#collect-content');
         el.value = arguments[0];
@@ -445,7 +433,6 @@ async function postToRakutenRoom(item) {
         el.dispatchEvent(new Event('keyup', { bubbles: true }));
       `, item.postText);
 
-      // 文字数カウンターを確認
       const charCount = await driver.executeScript(() => {
         const el = document.querySelector('#collect-content');
         return el ? el.value.length : 0;
@@ -461,37 +448,53 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑪ 「完了」ボタンをクリック
-    console.log('「完了」ボタンをクリック中...');
-    try {
-      // OKポップアップが残っている場合は閉じる
-      try {
-        const okBtn = await driver.findElement(By.xpath('//button[text()="OK"]'));
-        await driver.executeScript('arguments[0].click();', okBtn);
-        await sleep(1000);
-      } catch (e) {}
+    // ⑪ OKポップアップを再度閉じる（念のため）
+    await driver.executeScript(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const okBtn = buttons.find(b => b.textContent.trim() === 'OK');
+      if (okBtn) okBtn.click();
+    });
+    await sleep(500);
 
-      const submitBtn = await driver.findElement(By.css('button[type="submit"]'));
-      await driver.executeScript('arguments[0].click();', submitBtn);
-      console.log('完了ボタンをクリックしました');
-    } catch (e) {
-      console.log('完了ボタンエラー:', e.message);
-    }
+    // ⑫ 完了ボタンをJSで探してクリック
+    console.log('「完了」ボタンをクリック中...');
+    const submitResult = await driver.executeScript(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      console.log('ボタン一覧:', buttons.map(b => b.textContent.trim()).join(', '));
+      const submitBtn = buttons.find(b =>
+        b.textContent.includes('完了') ||
+        b.textContent.includes('投稿') ||
+        b.type === 'submit'
+      );
+      if (submitBtn) {
+        submitBtn.click();
+        return submitBtn.textContent.trim();
+      }
+      return null;
+    });
+    console.log('完了ボタンクリック結果:', submitResult);
     await sleep(5000);
 
-    // ⑫ 投稿完了確認
+    // ⑬ 投稿完了確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
 
+    // myROOMページが表示されれば成功
     if (
       finalUrl.includes('room.rakuten.co.jp') &&
       !finalUrl.includes('login') &&
-      !finalUrl.includes('sign_in')
+      !finalUrl.includes('sign_in') &&
+      !finalUrl.includes('collect')
     ) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
+    } else if (finalUrl.includes('collect')) {
+      // まだ投稿フォームにいる場合は投稿できていない
+      console.log(`❌ 投稿失敗（フォームに留まっている）: ${finalUrl}`);
+      await driver.quit();
+      return false;
     } else {
       console.log(`❌ 投稿失敗: ${finalUrl}`);
       await driver.quit();
