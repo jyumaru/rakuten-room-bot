@@ -343,6 +343,13 @@ async function postToRakutenRoom(item) {
       : roomLink;
     console.log('投稿フォームURL:', collectUrl);
 
+    // URLからitemcodeを抽出
+    const itemCodeMatch = collectUrl.match(/itemcode=([^&]+)/);
+    const itemCodeFromUrl = itemCodeMatch
+      ? decodeURIComponent(itemCodeMatch[1])
+      : item.itemCode;
+    console.log('itemCode（URLから）:', itemCodeFromUrl);
+
     // ⑧ ROOMの投稿フォームにアクセス
     await driver.get(collectUrl);
     await sleep(3000);
@@ -371,8 +378,8 @@ async function postToRakutenRoom(item) {
     }
     await sleep(1000);
 
-    // ⑩ 紹介文をAngularJSのスコープに直接セット
-    console.log('紹介文を入力中...');
+    // ⑩ 紹介文とitemCodeをAngularJSのスコープに直接セット
+    console.log('紹介文とitemCodeを入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
 
@@ -381,17 +388,26 @@ async function postToRakutenRoom(item) {
         if (!el) return 'element not found';
         const scope = angular.element(el).scope();
         if (!scope) return 'scope not found';
+
         scope.$apply(function() {
           scope.collectContent = arguments[0];
-        }.bind(null, arguments[0]));
+          // itemCodeをスコープにセット
+          if (!scope.itemCode || scope.itemCode === '') {
+            scope.itemCode = arguments[1];
+          }
+          scope.isCollectDisabled = false;
+          scope.isSubmitted = false;
+        }.bind(null, arguments[0], arguments[1]));
+
         el.value = arguments[0];
         el.dispatchEvent(new Event('input', { bubbles: true }));
-        return 'ok: ' + el.value.length + '文字';
-      `, item.postText);
 
-      console.log('紹介文入力結果:', inputResult);
+        return 'ok';
+      `, item.postText, itemCodeFromUrl);
 
-      // スコープの全変数をログ出力（デバッグ用）
+      console.log('入力結果:', inputResult);
+
+      // スコープ確認
       const scopeVars = await driver.executeScript(`
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
@@ -415,40 +431,35 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑪ collect()を$applyなしで呼び出す（非同期対応）
+    // ⑪ collect()を呼び出す
     console.log('collect()を呼び出します...');
     const collectResult = await driver.executeScript(`
       try {
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
         if (!scope) return 'scope not found';
-
-        // isCollectDisabledを無効化
         scope.isCollectDisabled = false;
-        scope.isSubmitted = false;
-
-        // $applyなしで直接呼び出す
         const result = scope.collect();
-        return 'called, result: ' + JSON.stringify(result);
+        return 'called';
       } catch(e) {
         return 'error: ' + e.message;
       }
     `);
     console.log('collect()結果:', collectResult);
 
-    // 3秒後にスコープ確認
     await sleep(3000);
+
     const afterCollect = await driver.executeScript(`
       try {
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
         return {
-          isSubmitted: scope ? scope.isSubmitted : 'no scope',
-          isCollectDisabled: scope ? scope.isCollectDisabled : 'no scope'
+          isSubmitted: scope ? scope.isSubmitted : false,
+          isCollectDisabled: scope ? scope.isCollectDisabled : false
         };
       } catch(e) { return {error: e.message}; }
     `);
-    console.log('collect()後のスコープ:', JSON.stringify(afterCollect));
+    console.log('collect()後:', JSON.stringify(afterCollect));
 
     await screenshot(driver, 'debug4b.png');
 
