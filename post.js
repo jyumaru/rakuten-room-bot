@@ -5,9 +5,9 @@ const { google } = require('googleapis');
 // 設定
 // ============================================================
 const CONFIG = {
-  EMAIL: process.env.EM,"jyumaru.shidou@gmail.com"
-  PASS:  process.env.PW,"e4KwbXGJH7aR"
-  SHEET: process.env.SID,"1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq"
+  EMAIL: process.env.EM,jyumaru.shidou@gmail.com
+  PASS:  process.env.PW,e4KwbXGJH7aR
+  SHEET: process.env.SID,1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq
 };
 
 // ============================================================
