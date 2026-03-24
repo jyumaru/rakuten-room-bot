@@ -133,7 +133,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
   await screenshot(driver, `${screenshotPrefix}_1.png`);
 
   try {
-    // メールアドレス入力
     const emailSelectors = [
       By.name('email'),
       By.name('username'),
@@ -159,7 +158,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
     await emailInput.sendKeys(CONFIG.EMAIL);
     await sleep(1000);
 
-    // 次へボタン or Enterキー
     try {
       const btn = await driver.findElement(By.css('button[type="submit"]'));
       await driver.executeScript('arguments[0].click();', btn);
@@ -169,7 +167,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
     await sleep(3000);
     await screenshot(driver, `${screenshotPrefix}_2.png`);
 
-    // パスワード入力
     const passInput = await driver.findElement(By.css('input[type="password"]'));
     console.log('パスワードを入力中...');
     await passInput.clear();
@@ -181,7 +178,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
     }
     await sleep(1000);
 
-    // ログインボタン or Enterキー
     try {
       const btn = await driver.findElement(By.css('button[type="submit"]'));
       await driver.executeScript('arguments[0].click();', btn);
@@ -189,7 +185,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
       await passInput.sendKeys(Key.RETURN);
     }
 
-    // リダイレクト先URLが来るまで最大15秒待つ
     console.log(`リダイレクト待機中... (目標URL: ${successUrlContains})`);
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
@@ -335,7 +330,7 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    // my.bookmark.rakuten.co.jpへのリダイレクトを待つ
+    // お気に入りページへのリダイレクトを待つ
     console.log('お気に入りページへのリダイレクト待機中...');
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
@@ -417,8 +412,6 @@ async function postToRakutenRoom(item) {
       console.log('ROOMログインページ検出。ログイン中...');
       await performLogin(driver, 'debug_room_relogin2', 'room.rakuten.co.jp');
       await sleep(3000);
-
-      // ログイン後に再度投稿フォームへ
       await driver.get(collectUrl);
       await sleep(3000);
     }
@@ -426,14 +419,39 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ 投稿フォームに紹介文を入力
+    // ⑨ OKポップアップを閉じる
+    try {
+      const okBtn = await driver.findElement(By.xpath('//button[text()="OK"]'));
+      await driver.executeScript('arguments[0].click();', okBtn);
+      await sleep(1000);
+      console.log('OKポップアップを閉じました');
+      await screenshot(driver, 'debug3b.png');
+    } catch (e) {
+      console.log('OKポップアップなし');
+    }
+
+    // ⑩ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
       const textarea = await driver.findElement(By.id('collect-content'));
-      await driver.executeScript('arguments[0].value = "";', textarea);
-      await driver.executeScript('arguments[0].value = arguments[1];', textarea, item.postText);
-      console.log('紹介文の入力完了');
+
+      // テキストをセットしてイベントを発火（文字数カウンター更新）
+      await driver.executeScript(`
+        const el = document.querySelector('#collect-content');
+        el.value = arguments[0];
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('keyup', { bubbles: true }));
+      `, item.postText);
+
+      // 文字数カウンターを確認
+      const charCount = await driver.executeScript(() => {
+        const el = document.querySelector('#collect-content');
+        return el ? el.value.length : 0;
+      });
+      console.log(`紹介文入力完了（${charCount}文字）`);
+
     } catch (e) {
       console.log('投稿フォームが見つかりません:', await driver.getCurrentUrl());
       await screenshot(driver, 'debug_no_form.png');
@@ -443,17 +461,25 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑩ 「完了」ボタンをクリック
+    // ⑪ 「完了」ボタンをクリック
     console.log('「完了」ボタンをクリック中...');
     try {
+      // OKポップアップが残っている場合は閉じる
+      try {
+        const okBtn = await driver.findElement(By.xpath('//button[text()="OK"]'));
+        await driver.executeScript('arguments[0].click();', okBtn);
+        await sleep(1000);
+      } catch (e) {}
+
       const submitBtn = await driver.findElement(By.css('button[type="submit"]'));
       await driver.executeScript('arguments[0].click();', submitBtn);
+      console.log('完了ボタンをクリックしました');
     } catch (e) {
       console.log('完了ボタンエラー:', e.message);
     }
     await sleep(5000);
 
-    // ⑪ 投稿完了確認
+    // ⑫ 投稿完了確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
