@@ -16,11 +16,8 @@ const CONFIG = {
 async function getUnpostedItems() {
   try {
     const b64 = process.env.GSA;
-    console.log('GSA長さ:', b64 ? b64.length : 'null');
     const json = Buffer.from(b64, 'base64').toString('utf8');
-    console.log('JSON先頭:', json.substring(0, 30));
     const credentials = JSON.parse(json);
-    console.log('認証情報タイプ:', credentials.type);
 
     const auth = new google.auth.GoogleAuth({
       credentials,
@@ -107,41 +104,80 @@ async function postToRakutenRoom(item) {
   page.setDefaultTimeout(30000);
 
   try {
-    // ① 楽天にログイン
+    // ① 楽天トップページからログイン
     console.log('楽天にログイン中...');
-    await page.goto(
-      'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_web&redirect_uri=https://www.rakuten.co.jp/&response_type=code&scope=openid',
-      { waitUntil: 'networkidle2' }
-    );
+    await page.goto('https://www.rakuten.co.jp/', { waitUntil: 'networkidle2' });
+    await new Promise(r => setTimeout(r, 2000));
+
+    // ログインリンクを探してクリック
+    try {
+      const loginLink = await page.$('a[href*="login"]');
+      if (loginLink) {
+        await loginLink.click();
+        await page.waitForNavigation({ waitUntil: 'networkidle2' });
+      }
+    } catch (e) {
+      console.log('ログインリンククリックエラー:', e.message);
+    }
 
     await page.screenshot({ path: 'debug_login.png', fullPage: false });
     console.log('ログインページURL:', page.url());
 
-    try {
-      await page.waitForSelector('input[name="username"], input[type="email"], #email', { timeout: 8000 });
-      const emailInput =
-        await page.$('input[name="username"]') ||
-        await page.$('input[type="email"]') ||
-        await page.$('#email');
-      await emailInput.type(CONFIG.EMAIL);
+    // input要素を調査してログ出力
+    const inputs = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('input')).map(el => ({
+        type: el.type,
+        name: el.name,
+        id: el.id,
+        placeholder: el.placeholder
+      }));
+    });
+    console.log('input要素:', JSON.stringify(inputs, null, 2));
 
-      const nextBtn = await page.$('button[type="submit"]');
-      if (nextBtn) {
-        await Promise.all([
-          page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
-          nextBtn.click(),
-        ]);
-        await new Promise(r => setTimeout(r, 2000));
+    try {
+      // メールアドレス入力（複数パターンを試す）
+      const emailSelectors = [
+        'input[name="username"]',
+        'input[name="u"]',
+        'input[type="email"]',
+        'input[id="email"]',
+        'input[placeholder*="メール"]',
+        'input[placeholder*="ID"]',
+      ];
+
+      let emailInput = null;
+      for (const sel of emailSelectors) {
+        emailInput = await page.$(sel);
+        if (emailInput) {
+          console.log('メール入力欄発見:', sel);
+          break;
+        }
+      }
+
+      if (emailInput) {
+        await emailInput.type(CONFIG.EMAIL);
+
+        // 次へボタンをクリック
+        const nextBtn = await page.$('button[type="submit"], input[type="submit"]');
+        if (nextBtn) {
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
+            nextBtn.click(),
+          ]);
+          await new Promise(r => setTimeout(r, 2000));
+        }
       }
 
       await page.screenshot({ path: 'debug_login2.png', fullPage: false });
+      console.log('メール入力後URL:', page.url());
 
+      // パスワード入力
       const passInput = await page.$('input[type="password"]');
       if (passInput) {
         await passInput.type(CONFIG.PASS);
         await Promise.all([
           page.waitForNavigation({ waitUntil: 'networkidle2' }),
-          page.click('button[type="submit"]'),
+          page.click('button[type="submit"], input[type="submit"]'),
         ]);
       }
 
@@ -216,13 +252,21 @@ async function postToRakutenRoom(item) {
     if (bookmarkUrl.includes('login') || bookmarkUrl.includes('sign_in')) {
       console.log('ログインページにリダイレクトされました。再ログインします...');
       try {
-        const emailInput =
-          await page.$('input[name="username"]') ||
-          await page.$('input[type="email"]') ||
-          await page.$('#email');
+        const emailSelectors = [
+          'input[name="username"]',
+          'input[name="u"]',
+          'input[type="email"]',
+          'input[id="email"]',
+        ];
+
+        let emailInput = null;
+        for (const sel of emailSelectors) {
+          emailInput = await page.$(sel);
+          if (emailInput) break;
+        }
         if (emailInput) await emailInput.type(CONFIG.EMAIL);
 
-        const nextBtn = await page.$('button[type="submit"]');
+        const nextBtn = await page.$('button[type="submit"], input[type="submit"]');
         if (nextBtn) {
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
@@ -236,7 +280,7 @@ async function postToRakutenRoom(item) {
           await passInput.type(CONFIG.PASS);
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle2' }),
-            page.click('button[type="submit"]'),
+            page.click('button[type="submit"], input[type="submit"]'),
           ]);
         }
 
@@ -372,7 +416,6 @@ async function postToRakutenRoom(item) {
 async function main() {
   console.log('=== 楽天ROOM自動投稿開始 ===');
 
-  // 環境変数チェック
   console.log('EM:', process.env.EM ? '設定済み' : '未設定');
   console.log('PW:', process.env.PW ? '設定済み' : '未設定');
   console.log('SID:', process.env.SID ? '設定済み' : '未設定');
