@@ -147,7 +147,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
         } catch (e) {}
       }
       if (emailInput) break;
-      console.log(`メール入力欄待機中...（${attempt + 1}回目）`);
       await sleep(2000);
     }
 
@@ -230,13 +229,11 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    // ② 楽天ROOMにもログイン
-    console.log('楽天ROOMにログイン中...');
+    // ② 楽天ROOMのセッション確立（ログインURLにアクセスするだけ）
+    console.log('楽天ROOMのセッション確立中...');
     await driver.get('https://login.account.rakuten.com/sso/authorize?client_id=rakuten_room_web&redirect_uri=https://room.rakuten.co.jp/common/callback&scope=openid&response_type=code&state=login#/sign_in');
     await sleep(5000);
-
-    const roomLoggedIn = await performLogin(driver, 'debug_room_login', 'room.rakuten.co.jp');
-    console.log('ROOMログイン結果:', roomLoggedIn ? '成功' : '失敗（続行）');
+    console.log('ROOMセッション確立後URL:', await driver.getCurrentUrl());
 
     // ③ 楽天トップページでセッション確立
     await driver.get('https://www.rakuten.co.jp/?l-id=pc_header_logo');
@@ -367,19 +364,16 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑩ OKポップアップを閉じる
-    // OKボタンは<a>タグ（<button>ではない）
+    // ⑩ OKポップアップを閉じる（<a>タグ）
     console.log('OKポップアップを閉じます...');
     for (let i = 0; i < 10; i++) {
       try {
-        // <a>タグのOKボタン（li.ok > a）
         const okLink = await driver.findElement(By.css('li.ok a'));
         await driver.executeScript('arguments[0].click();', okLink);
         console.log(`OKリンクをクリック（${i + 1}回目）`);
         await sleep(800);
       } catch (e) {
         try {
-          // ng-clickのOKボタンも試す
           const okBtn = await driver.findElement(By.xpath('//*[contains(@ng-click,"ok()") and not(contains(@ng-click,"book"))]'));
           await driver.executeScript('arguments[0].click();', okBtn);
           console.log(`OKボタン(ng-click)をクリック（${i + 1}回目）`);
@@ -395,11 +389,9 @@ async function postToRakutenRoom(item) {
     await screenshot(driver, 'debug4b.png');
 
     // ⑪ 「完了」ボタンをクリック
-    // 完了ボタンは collect-btn クラスのボタン（テキストはspanの中）
     console.log('完了ボタンをクリック中...');
     let submitSuccess = false;
 
-    // collect-btnクラスで直接探す（テキスト不要）
     try {
       const collectBtns = await driver.findElements(By.css('button.collect-btn'));
       console.log(`collect-btnボタン数: ${collectBtns.length}`);
@@ -407,8 +399,6 @@ async function postToRakutenRoom(item) {
       for (const btn of collectBtns) {
         const isDisplayed = await btn.isDisplayed();
         const isEnabled = await btn.isEnabled();
-        console.log(`ボタン: visible=${isDisplayed}, enabled=${isEnabled}`);
-
         if (isDisplayed && isEnabled) {
           await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', btn);
           await sleep(500);
@@ -422,7 +412,6 @@ async function postToRakutenRoom(item) {
       console.log('collect-btnエラー:', e.message);
     }
 
-    // ng-clickで探す
     if (!submitSuccess) {
       try {
         const btn = await driver.findElement(By.css('button[ng-click="collect()"]'));
@@ -441,21 +430,30 @@ async function postToRakutenRoom(item) {
 
     if (!submitSuccess) {
       console.log('完了ボタンが見つかりませんでした');
+      await driver.quit();
+      return false;
     }
 
-    await sleep(6000);
+    // ⑫ 投稿完了を待つ（ローディングが終わるまで最大30秒）
+    console.log('投稿完了を待機中...');
+    for (let i = 0; i < 30; i++) {
+      await sleep(1000);
+      const url = await driver.getCurrentUrl();
+      console.log(`待機${i + 1}秒: ${url}`);
+      if (url.includes('room.rakuten.co.jp') && !url.includes('collect') && !url.includes('login')) {
+        console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
+        await screenshot(driver, 'debug_final.png');
+        await driver.quit();
+        return true;
+      }
+    }
 
-    // ⑫ 投稿完了確認
+    // ⑬ 最終確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
 
-    if (
-      finalUrl.includes('room.rakuten.co.jp') &&
-      !finalUrl.includes('login') &&
-      !finalUrl.includes('sign_in') &&
-      !finalUrl.includes('collect')
-    ) {
+    if (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('login') && !finalUrl.includes('sign_in') && !finalUrl.includes('collect')) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
