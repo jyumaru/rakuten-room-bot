@@ -363,50 +363,60 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑩ OKポップアップが完全に消えるまで閉じる
-    console.log('OKポップアップを確実に閉じます...');
+    // ⑩ OKポップアップをSeleniumで直接閉じる（最大10回試みる）
+    console.log('OKポップアップをSeleniumで閉じます...');
     for (let i = 0; i < 10; i++) {
-      const popupExists = await driver.executeScript(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const okBtn = buttons.find(b => b.textContent.trim() === 'OK');
-        if (okBtn) {
-          okBtn.click();
-          return true;
-        }
-        return false;
-      });
-      if (!popupExists) {
-        console.log(`ポップアップが消えました（${i}回クリック後）`);
+      try {
+        const okBtn = await driver.findElement(
+          By.xpath('//button[normalize-space(text())="OK"]')
+        );
+        await driver.executeScript('arguments[0].click();', okBtn);
+        console.log(`OKボタンをクリック（${i + 1}回目）`);
+        await sleep(800);
+      } catch (e) {
+        console.log(`OKボタンなし（${i}回クリック後）`);
         break;
       }
-      console.log(`ポップアップを閉じています...（${i + 1}回目）`);
-      await sleep(500);
     }
 
-    // ポップアップが消えたことを確認してから待機
     await sleep(1500);
     await screenshot(driver, 'debug4b.png');
 
-    // ⑪ 「完了」ボタンをクリック（collect-btnクラスで特定）
+    // ⑪ 「完了」ボタンをSeleniumで直接クリック
     console.log('完了ボタンをクリック中...');
-    const submitResult = await driver.executeScript(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
+    let submitSuccess = false;
 
-      // collect-btnクラスかつ「完了」テキストのボタンを優先
-      const submitBtn =
-        buttons.find(b => b.textContent.trim() === '完了' && b.className.includes('collect-btn')) ||
-        buttons.find(b => b.textContent.trim() === '完了') ||
-        buttons.find(b => b.textContent.trim() === '投稿する');
+    // まずXPathで「完了」テキストのボタンを探す
+    try {
+      const completeBtn = await driver.findElement(
+        By.xpath('//button[normalize-space(text())="完了" and contains(@class,"collect-btn")]')
+      );
+      await completeBtn.scrollIntoView();
+      await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', completeBtn);
+      await sleep(500);
+      await driver.executeScript('arguments[0].click();', completeBtn);
+      console.log('完了ボタンクリック成功（collect-btn）');
+      submitSuccess = true;
+    } catch (e) {
+      console.log('collect-btnで見つからず、別の方法で試します...');
+    }
 
-      if (submitBtn) {
-        submitBtn.scrollIntoView({ block: 'center' });
-        submitBtn.click();
-        return submitBtn.textContent.trim();
+    // 次に「完了」テキストのボタンを探す
+    if (!submitSuccess) {
+      try {
+        const completeBtn = await driver.findElement(
+          By.xpath('//button[normalize-space(text())="完了"]')
+        );
+        await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', completeBtn);
+        await sleep(500);
+        await driver.executeScript('arguments[0].click();', completeBtn);
+        console.log('完了ボタンクリック成功');
+        submitSuccess = true;
+      } catch (e) {
+        console.log('完了ボタンが見つかりません:', e.message);
       }
-      return null;
-    });
+    }
 
-    console.log('完了ボタンクリック結果:', submitResult);
     await sleep(6000);
 
     // ⑫ 投稿完了確認
