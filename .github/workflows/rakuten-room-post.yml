@@ -41,14 +41,22 @@ jobs:
         with:
           name: debug-screenshots
           path: |
-            debug_login.png
-            debug_login2.png
-            debug_login3.png
+            debug_login_1.png
+            debug_login_2.png
+            debug_login_3.png
+            debug_login_failed.png
+            debug_login_error.png
+            debug_room_login_1.png
+            debug_room_login_2.png
+            debug_room_login_3.png
+            debug_room_relogin2_1.png
+            debug_room_relogin2_2.png
             debug1.png
             debug2.png
-            debug2b.png
             debug3.png
             debug4.png
             debug_final.png
             debug_error.png
+            debug_no_bookmark.png
+            debug_no_form.png
           if-no-files-found: ignore
