@@ -88,7 +88,7 @@ async function markAsPosted(rowIndex) {
 }
 
 // ============================================================
-// ログイン処理（ブックマーク認証URL経由）
+// ログイン処理
 // ============================================================
 async function loginToRakuten(page) {
   const loginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
@@ -101,7 +101,6 @@ async function loginToRakuten(page) {
   console.log('ログインページURL:', page.url());
 
   try {
-    // メールアドレス入力
     const emailSelectors = [
       'input[name="email"]',
       'input[name="username"]',
@@ -127,7 +126,6 @@ async function loginToRakuten(page) {
     await emailInput.type(CONFIG.EMAIL);
     await new Promise(r => setTimeout(r, 1000));
 
-    // 次へボタン
     const nextBtn = await page.$('button[type="submit"]');
     if (nextBtn) {
       await nextBtn.click();
@@ -136,7 +134,6 @@ async function loginToRakuten(page) {
 
     await page.screenshot({ path: 'debug_login2.png', fullPage: false });
 
-    // パスワード入力
     const passInput = await page.$('input[type="password"]');
     if (passInput) {
       await passInput.click({ clickCount: 3 });
@@ -185,7 +182,7 @@ async function postToRakutenRoom(item) {
   page.setDefaultTimeout(30000);
 
   try {
-    // ① ブックマーク認証URLからログイン
+    // ① ログイン
     const loggedIn = await loginToRakuten(page);
     if (!loggedIn) {
       console.log('ログインに失敗しました。スキップします。');
@@ -193,7 +190,7 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    // ② 楽天トップページから商品ページに移動
+    // ② 楽天トップページに移動してセッションを確立
     console.log('楽天トップページに移動...');
     await page.goto('https://www.rakuten.co.jp/?l-id=pc_header_logo', {
       waitUntil: 'networkidle2'
@@ -203,7 +200,7 @@ async function postToRakutenRoom(item) {
     // ③ 商品ページを開く
     console.log(`商品ページを開く: ${item.itemName.substring(0, 30)}`);
     await page.goto(item.itemUrl, { waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 3000));
     await page.screenshot({ path: 'debug1.png', fullPage: false });
     console.log('商品ページURL:', page.url());
 
@@ -217,39 +214,96 @@ async function postToRakutenRoom(item) {
       }
     } catch (e) {}
 
-    // ④ お気に入りボタンをクリック
+    // ④ お気に入り関連要素を全て調査
+    console.log('お気に入り関連要素を調査中...');
+    const pageElements = await page.evaluate(() => {
+      const els = Array.from(document.querySelectorAll('a, button, span, div'));
+      return els
+        .map(el => ({
+          tag: el.tagName,
+          text: el.textContent.trim().substring(0, 40),
+          href: el.href || '',
+          className: el.className.substring(0, 80),
+          onclick: el.getAttribute('onclick') || '',
+          id: el.id || '',
+          dataRatid: el.getAttribute('data-ratid') || '',
+        }))
+        .filter(el =>
+          el.text.includes('お気に入り') ||
+          el.text.includes('ブックマーク') ||
+          el.className.toLowerCase().includes('bookmark') ||
+          el.className.toLowerCase().includes('favorite') ||
+          el.className.toLowerCase().includes('wish') ||
+          el.id.toLowerCase().includes('bookmark') ||
+          el.id.toLowerCase().includes('favorite') ||
+          el.dataRatid.includes('bookmark') ||
+          el.dataRatid.includes('favorite') ||
+          el.href.includes('bookmark')
+        );
+    });
+    console.log('お気に入り関連要素:', JSON.stringify(pageElements, null, 2));
+
+    // ⑤ お気に入りボタンをクリック（調査結果をもとに複数パターン試す）
     console.log('お気に入りボタンをクリック中...');
     let bookmarkClicked = false;
 
+    // 調査で発見された要素をもとにクリックを試みる
     const bookmarkSelectors = [
-      '.floatingBookmarkAreaWrapper',
+      // data-ratid属性で探す
+      '[data-ratid*="bookmark"]',
+      '[data-ratid*="favorite"]',
       '[data-ratid="item_bookmark"]',
-      'a[href*="my.bookmark.rakuten"]',
-      '.bookmark-button',
-      'button[class*="bookmark"]',
-      'a[class*="bookmark"]',
+      // クラス名で探す
+      '.floatingBookmarkAreaWrapper',
+      '[class*="bookmark"]',
+      '[class*="Bookmark"]',
+      '[class*="favorite"]',
+      '[class*="Favorite"]',
+      // テキストで探す
+      'button',
     ];
 
     for (const selector of bookmarkSelectors) {
       try {
-        await page.waitForSelector(selector, { timeout: 3000 });
-        await page.click(selector);
-        console.log(`お気に入りボタンクリック成功: ${selector}`);
-        bookmarkClicked = true;
-        break;
+        if (selector === 'button') {
+          // ボタンの中からお気に入りテキストを含むものを探す
+          const clicked = await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const btn = buttons.find(b =>
+              b.textContent.includes('お気に入り') ||
+              b.textContent.includes('ブックマーク')
+            );
+            if (btn) {
+              btn.click();
+              return btn.textContent.trim();
+            }
+            return null;
+          });
+          if (clicked) {
+            console.log(`お気に入りボタンクリック成功（テキスト）: ${clicked}`);
+            bookmarkClicked = true;
+            break;
+          }
+        } else {
+          await page.waitForSelector(selector, { timeout: 2000 });
+          await page.click(selector);
+          console.log(`お気に入りボタンクリック成功: ${selector}`);
+          bookmarkClicked = true;
+          break;
+        }
       } catch (e) {
-        console.log(`セレクタ未発見: ${selector}`);
+        // 見つからなければ次を試す
       }
     }
 
     if (!bookmarkClicked) {
-      console.log('お気に入りボタンが見つかりません。スキップします。');
+      console.log('お気に入りボタンが見つかりません。スクリーンショットを確認してください。');
       await page.screenshot({ path: 'debug_no_bookmark.png', fullPage: true });
       await browser.close();
       return false;
     }
 
-    // ⑤ ブックマーク認証ページへの遷移を待つ
+    // ⑥ お気に入りブックマークページへの遷移を待つ
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(e => {
       console.log('ナビゲーションタイムアウト（続行）:', e.message);
     });
@@ -302,7 +356,7 @@ async function postToRakutenRoom(item) {
       }
     }
 
-    // ⑥ お気に入りブックマーク一覧で「ROOMに追加」を探す
+    // ⑦ お気に入り一覧で「ROOMに追加」を探す
     console.log('ROOM関連要素を検索中...');
     await new Promise(r => setTimeout(r, 2000));
 
@@ -313,7 +367,7 @@ async function postToRakutenRoom(item) {
           tag: el.tagName,
           text: el.textContent.trim().substring(0, 50),
           href: el.href || '',
-          className: el.className.substring(0, 50)
+          className: el.className.substring(0, 60)
         }))
         .filter(el =>
           el.text.includes('ROOM') ||
@@ -325,7 +379,7 @@ async function postToRakutenRoom(item) {
     });
     console.log('ROOM関連要素:', JSON.stringify(allElements, null, 2));
 
-    // ⑦ 「ROOMに追加」または「ROOMに投稿」をクリック
+    // ⑧ 「ROOMに追加」または「ROOMに投稿」をクリック
     console.log('ROOMに追加リンクをクリック中...');
     try {
       const clicked = await page.evaluate(() => {
@@ -362,7 +416,7 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', page.url());
     await page.screenshot({ path: 'debug3.png', fullPage: true });
 
-    // ⑧ 投稿フォームに紹介文を入力
+    // ⑨ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await page.waitForSelector('#collect-content', { timeout: 10000 });
@@ -382,7 +436,7 @@ async function postToRakutenRoom(item) {
 
     await page.screenshot({ path: 'debug4.png', fullPage: false });
 
-    // ⑨ 「完了」ボタンをクリック
+    // ⑩ 「完了」ボタンをクリック
     console.log('「完了」ボタンをクリック中...');
     try {
       await Promise.all([
@@ -393,7 +447,7 @@ async function postToRakutenRoom(item) {
       console.log('ナビゲーションなしで投稿完了の可能性:', e.message);
     }
 
-    // ⑩ 投稿完了確認
+    // ⑪ 投稿完了確認
     const finalUrl = page.url();
     console.log('投稿後URL:', finalUrl);
     await page.screenshot({ path: 'debug_final.png', fullPage: false });
