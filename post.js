@@ -2,12 +2,12 @@ const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
 
 // ============================================================
-// 設定（Secret名を短くしてマスク回避）
+// 設定
 // ============================================================
 const CONFIG = {
-  EMAIL:    process.env.R_EMAIL,"jyumaru.shidou@gmail.com"
-  PASS:     process.env.R_PASS,"e4KwbXGJH7aR"
-  SHEET:    process.env.SHEET_ID,"1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq"
+  EMAIL: process.env.EM,"jyumaru.shidou@gmail.com"
+  PASS:  process.env.PW,"e4KwbXGJH7aR"
+  SHEET: process.env.SID,"1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq"
 };
 
 // ============================================================
@@ -92,7 +92,7 @@ async function postToRakutenRoom(item) {
   page.setDefaultTimeout(30000);
 
   try {
-    // ① 楽天にログイン（新認証システム対応）
+    // ① 楽天にログイン
     console.log('楽天にログイン中...');
     await page.goto(
       'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_web&redirect_uri=https://www.rakuten.co.jp/&response_type=code&scope=openid',
@@ -103,7 +103,6 @@ async function postToRakutenRoom(item) {
     console.log('ログインページURL:', page.url());
 
     try {
-      // メールアドレス入力
       await page.waitForSelector('input[name="username"], input[type="email"], #email', { timeout: 8000 });
       const emailInput =
         await page.$('input[name="username"]') ||
@@ -111,7 +110,6 @@ async function postToRakutenRoom(item) {
         await page.$('#email');
       await emailInput.type(CONFIG.EMAIL);
 
-      // 次へボタンをクリック
       const nextBtn = await page.$('button[type="submit"]');
       if (nextBtn) {
         await Promise.all([
@@ -123,7 +121,6 @@ async function postToRakutenRoom(item) {
 
       await page.screenshot({ path: 'debug_login2.png', fullPage: false });
 
-      // パスワード入力
       const passInput = await page.$('input[type="password"]');
       if (passInput) {
         await passInput.type(CONFIG.PASS);
