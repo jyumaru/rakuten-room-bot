@@ -52,23 +52,3 @@ jobs:
             debug_final.png
             debug_error.png
           if-no-files-found: ignore
-- name: スクリーンショットをアップロード
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshots
-          path: |
-            debug_login_1.png
-            debug_login_2.png
-            debug_login_3.png
-            debug_login_failed.png
-            debug_room_login_1.png
-            debug_room_login_2.png
-            debug_room_login_3.png
-            debug1.png
-            debug2.png
-            debug3.png
-            debug4.png
-            debug_final.png
-            debug_error.png
-          if-no-files-found: ignore
