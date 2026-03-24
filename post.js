@@ -379,39 +379,35 @@ async function postToRakutenRoom(item) {
       const inputResult = await driver.executeScript(`
         const el = document.querySelector('#collect-content');
         if (!el) return 'element not found';
-
-        // AngularJSのスコープを取得
         const scope = angular.element(el).scope();
         if (!scope) return 'scope not found';
-
-        // スコープのモデルに直接セット
         scope.$apply(function() {
           scope.collectContent = arguments[0];
         }.bind(null, arguments[0]));
-
-        // DOMにも反映
         el.value = arguments[0];
         el.dispatchEvent(new Event('input', { bubbles: true }));
-
         return 'ok: ' + el.value.length + '文字';
       `, item.postText);
 
       console.log('紹介文入力結果:', inputResult);
 
-      // AngularJSのバインディングを確認
-      const scopeCheck = await driver.executeScript(`
+      // スコープの全変数をログ出力（デバッグ用）
+      const scopeVars = await driver.executeScript(`
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
+        if (!scope) return {};
         return {
-          domValue: el.value.length,
-          scopeValue: scope ? (scope.collectContent || '').length : 'no scope',
-          isDisabled: scope ? scope.isCollectDisabled : 'no scope'
+          collectContent: (scope.collectContent || '').length + '文字',
+          isCollectDisabled: scope.isCollectDisabled,
+          isSubmitted: scope.isSubmitted,
+          itemCode: scope.itemCode || 'なし',
+          hasCollectFn: typeof scope.collect === 'function'
         };
       `);
-      console.log('スコープ確認:', JSON.stringify(scopeCheck));
+      console.log('スコープ変数:', JSON.stringify(scopeVars));
 
     } catch (e) {
-      console.log('投稿フォームが見つかりません:', e.message);
+      console.log('投稿フォームエラー:', e.message);
       await screenshot(driver, 'debug_no_form.png');
       await driver.quit();
       return false;
@@ -419,33 +415,41 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑪ AngularJSのcollect()を直接呼び出す
-    console.log('AngularJS collect()を直接呼び出します...');
+    // ⑪ collect()を$applyなしで呼び出す（非同期対応）
+    console.log('collect()を呼び出します...');
     const collectResult = await driver.executeScript(`
       try {
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
         if (!scope) return 'scope not found';
 
-        // isCollectDisabledをfalseに強制設定
-        scope.$apply(function() {
-          scope.isCollectDisabled = false;
-          scope.isSubmitted = false;
-        });
+        // isCollectDisabledを無効化
+        scope.isCollectDisabled = false;
+        scope.isSubmitted = false;
 
-        // collect()関数を直接呼び出す
-        scope.$apply(function() {
-          scope.collect();
-        });
-
-        return 'collect() called';
+        // $applyなしで直接呼び出す
+        const result = scope.collect();
+        return 'called, result: ' + JSON.stringify(result);
       } catch(e) {
         return 'error: ' + e.message;
       }
     `);
-    console.log('collect()呼び出し結果:', collectResult);
+    console.log('collect()結果:', collectResult);
 
+    // 3秒後にスコープ確認
     await sleep(3000);
+    const afterCollect = await driver.executeScript(`
+      try {
+        const el = document.querySelector('#collect-content');
+        const scope = angular.element(el).scope();
+        return {
+          isSubmitted: scope ? scope.isSubmitted : 'no scope',
+          isCollectDisabled: scope ? scope.isCollectDisabled : 'no scope'
+        };
+      } catch(e) { return {error: e.message}; }
+    `);
+    console.log('collect()後のスコープ:', JSON.stringify(afterCollect));
+
     await screenshot(driver, 'debug4b.png');
 
     // ⑫ 投稿後のポップアップを閉じる
@@ -464,37 +468,24 @@ async function postToRakutenRoom(item) {
     await sleep(3000);
     await screenshot(driver, 'debug_final.png');
 
-    // ⑬ 投稿完了確認（ROOMのアイテムページに遷移したか）
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
 
-    // collectページ以外のroomページに移動していれば成功
-    if (
-      finalUrl.includes('room.rakuten.co.jp') &&
-      !finalUrl.includes('login') &&
-      !finalUrl.includes('sign_in') &&
-      !finalUrl.includes('/mix/collect')
-    ) {
-      console.log(`✅ 投稿成功（URLが変化）: ${item.itemName.substring(0, 40)}`);
-      await driver.quit();
-      return true;
-    }
-
-    // collectページのままでもisSubmittedがtrueなら成功
-    const isSubmitted = await driver.executeScript(`
+    const finalScope = await driver.executeScript(`
       try {
         const el = document.querySelector('#collect-content');
-        if (!el) return false;
+        if (!el) return {noElement: true};
         const scope = angular.element(el).scope();
-        return scope ? scope.isSubmitted : false;
-      } catch(e) {
-        return false;
-      }
+        return { isSubmitted: scope ? scope.isSubmitted : false };
+      } catch(e) { return {error: e.message}; }
     `);
-    console.log('isSubmitted:', isSubmitted);
+    console.log('最終スコープ:', JSON.stringify(finalScope));
 
-    if (isSubmitted) {
-      console.log(`✅ 投稿成功（isSubmitted=true）: ${item.itemName.substring(0, 40)}`);
+    if (
+      (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('/mix/collect') && !finalUrl.includes('login')) ||
+      finalScope.isSubmitted === true
+    ) {
+      console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
     }
@@ -530,7 +521,8 @@ async function main() {
     return;
   }
 
-  const targetItems = items.slice(0, 3);
+  // 調査のため1件のみ
+  const targetItems = items.slice(0, 1);
 
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
