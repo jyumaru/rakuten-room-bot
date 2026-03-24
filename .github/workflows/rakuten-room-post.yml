@@ -42,6 +42,10 @@ jobs:
           name: debug-screenshots
           path: |
             page_debug.html
+            debug_room_login_before.png
+            debug_room_login_after.png
+            debug4b.png
+            page_debug.html
             debug_login_1.png
             debug_login_2.png
             debug_login_3.png
