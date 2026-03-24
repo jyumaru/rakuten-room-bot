@@ -127,7 +127,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
   await screenshot(driver, `${screenshotPrefix}_1.png`);
 
   try {
-    // メールアドレス入力欄を待機して探す
     let emailInput = null;
     const emailSelectors = [
       By.name('email'),
@@ -228,7 +227,7 @@ async function postToRakutenRoom(item) {
     // ② 楽天ROOMにもログイン
     console.log('楽天ROOMにログイン中...');
     await driver.get('https://login.account.rakuten.com/sso/authorize?client_id=rakuten_room_web&redirect_uri=https://room.rakuten.co.jp/common/callback&scope=openid&response_type=code&state=login#/sign_in');
-    await sleep(5000); // ROOMログインは少し長めに待機
+    await sleep(5000);
 
     const roomLoggedIn = await performLogin(driver, 'debug_room_login', 'room.rakuten.co.jp');
     if (!roomLoggedIn) {
@@ -302,9 +301,7 @@ async function postToRakutenRoom(item) {
     await sleep(2000);
     const roomLink = await driver.executeScript(() => {
       const links = Array.from(document.querySelectorAll('a'));
-      const link = links.find(a =>
-        a.href && a.href.includes('room.rakuten.co.jp')
-      );
+      const link = links.find(a => a.href && a.href.includes('room.rakuten.co.jp'));
       return link ? link.href : null;
     });
 
@@ -317,7 +314,6 @@ async function postToRakutenRoom(item) {
 
     console.log('ROOMリンク発見:', roomLink);
 
-    // /mix? を /mix/collect? に変換
     let collectUrl = roomLink.includes('/mix?')
       ? roomLink.replace('/mix?', '/mix/collect?')
       : roomLink;
@@ -327,7 +323,6 @@ async function postToRakutenRoom(item) {
     await driver.get(collectUrl);
     await sleep(3000);
 
-    // ログインが必要な場合は再ログイン
     const curUrl = await driver.getCurrentUrl();
     if (curUrl.includes('login') || curUrl.includes('sign_in')) {
       console.log('ROOMログインページ検出。ログイン中...');
@@ -340,25 +335,7 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ OKポップアップをJSで確実に閉じる（複数回試みる）
-    console.log('OKポップアップを閉じます...');
-    for (let i = 0; i < 5; i++) {
-      const closed = await driver.executeScript(() => {
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const okBtn = buttons.find(b => b.textContent.trim() === 'OK');
-        if (okBtn) { okBtn.click(); return true; }
-        return false;
-      });
-      if (closed) {
-        console.log(`OKポップアップを閉じました（${i + 1}回目）`);
-        await sleep(800);
-      } else {
-        break;
-      }
-    }
-    await screenshot(driver, 'debug3b.png');
-
-    // ⑩ 投稿フォームに紹介文を入力
+    // ⑨ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
@@ -386,54 +363,44 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑪ OKポップアップを再度閉じる
-    await driver.executeScript(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
-      const okBtn = buttons.find(b => b.textContent.trim() === 'OK');
-      if (okBtn) okBtn.click();
-    });
-    await sleep(500);
+    // ⑩ OKポップアップが完全に消えるまで閉じる
+    console.log('OKポップアップを確実に閉じます...');
+    for (let i = 0; i < 10; i++) {
+      const popupExists = await driver.executeScript(() => {
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const okBtn = buttons.find(b => b.textContent.trim() === 'OK');
+        if (okBtn) {
+          okBtn.click();
+          return true;
+        }
+        return false;
+      });
+      if (!popupExists) {
+        console.log(`ポップアップが消えました（${i}回クリック後）`);
+        break;
+      }
+      console.log(`ポップアップを閉じています...（${i + 1}回目）`);
+      await sleep(500);
+    }
 
-    // ⑫ ページ最下部にスクロールして完了ボタンをクリック
+    // ポップアップが消えたことを確認してから待機
+    await sleep(1500);
+    await screenshot(driver, 'debug4b.png');
+
+    // ⑪ 「完了」ボタンをクリック（collect-btnクラスで特定）
     console.log('完了ボタンをクリック中...');
-
-    // 全ボタンを確認してログ出力
-    const allBtns = await driver.executeScript(() => {
-      return Array.from(document.querySelectorAll('button'))
-        .map(b => ({
-          text: b.textContent.trim(),
-          type: b.type,
-          className: b.className.substring(0, 50),
-          visible: b.offsetParent !== null
-        }));
-    });
-    console.log('ページ内ボタン一覧:', JSON.stringify(allBtns, null, 2));
-
-    // 「完了」ボタンを特定してスクロール後クリック
     const submitResult = await driver.executeScript(() => {
       const buttons = Array.from(document.querySelectorAll('button'));
 
-      // 「完了」テキストを完全一致で探す（最優先）
-      let submitBtn = buttons.find(b => b.textContent.trim() === '完了');
-
-      // 次に「投稿する」
-      if (!submitBtn) submitBtn = buttons.find(b => b.textContent.trim() === '投稿する');
-
-      // 写真・編集系ボタンを除外してsubmitタイプを探す
-      if (!submitBtn) {
-        submitBtn = buttons.find(b =>
-          b.type === 'submit' &&
-          !b.textContent.includes('写真') &&
-          !b.textContent.includes('編集') &&
-          !b.textContent.includes('追加') &&
-          !b.textContent.includes('OK')
-        );
-      }
+      // collect-btnクラスかつ「完了」テキストのボタンを優先
+      const submitBtn =
+        buttons.find(b => b.textContent.trim() === '完了' && b.className.includes('collect-btn')) ||
+        buttons.find(b => b.textContent.trim() === '完了') ||
+        buttons.find(b => b.textContent.trim() === '投稿する');
 
       if (submitBtn) {
-        // スクロールして表示
-        submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setTimeout(() => submitBtn.click(), 500);
+        submitBtn.scrollIntoView({ block: 'center' });
+        submitBtn.click();
         return submitBtn.textContent.trim();
       }
       return null;
@@ -442,7 +409,7 @@ async function postToRakutenRoom(item) {
     console.log('完了ボタンクリック結果:', submitResult);
     await sleep(6000);
 
-    // ⑬ 投稿完了確認
+    // ⑫ 投稿完了確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
