@@ -120,14 +120,13 @@ async function screenshot(driver, filename) {
 }
 
 // ============================================================
-// ログイン処理（入力欄が表示されるまで待機）
+// ログイン処理
 // ============================================================
 async function performLogin(driver, screenshotPrefix, successUrlContains) {
   console.log('ログイン処理開始...');
   await screenshot(driver, `${screenshotPrefix}_1.png`);
 
   try {
-    // 入力欄が現れるまで最大10秒待機
     let emailInput = null;
     const emailSelectors = [
       By.name('email'),
@@ -154,7 +153,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
 
     if (!emailInput) {
       console.log('メール入力欄が見つかりません');
-      await screenshot(driver, `${screenshotPrefix}_no_input.png`);
       return false;
     }
 
@@ -172,7 +170,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
     await sleep(3000);
     await screenshot(driver, `${screenshotPrefix}_2.png`);
 
-    // パスワード入力欄が現れるまで待機
     await driver.wait(until.elementLocated(By.css('input[type="password"]')), 10000);
     const passInput = await driver.findElement(By.css('input[type="password"]'));
     console.log('パスワードを入力中...');
@@ -237,11 +234,9 @@ async function postToRakutenRoom(item) {
     console.log('楽天ROOMにログイン中...');
     await driver.get('https://login.account.rakuten.com/sso/authorize?client_id=rakuten_room_web&redirect_uri=https://room.rakuten.co.jp/common/callback&scope=openid&response_type=code&state=login#/sign_in');
     await sleep(5000);
-    await screenshot(driver, 'debug_room_login_before.png');
 
     const roomLoggedIn = await performLogin(driver, 'debug_room_login', 'room.rakuten.co.jp');
     console.log('ROOMログイン結果:', roomLoggedIn ? '成功' : '失敗（続行）');
-    await screenshot(driver, 'debug_room_login_after.png');
 
     // ③ 楽天トップページでセッション確立
     await driver.get('https://www.rakuten.co.jp/?l-id=pc_header_logo');
@@ -333,7 +328,6 @@ async function postToRakutenRoom(item) {
     await sleep(3000);
 
     const curUrl = await driver.getCurrentUrl();
-    console.log('フォームアクセス後URL:', curUrl);
     if (curUrl.includes('login') || curUrl.includes('sign_in') || curUrl.includes('403')) {
       console.log('ROOMログインページ/403検出。ログイン中...');
       await performLogin(driver, 'debug_room_relogin', 'room.rakuten.co.jp');
@@ -373,82 +367,85 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑩ ページHTML保存とShadow DOM調査
-    const pageHtml = await driver.executeScript(() => document.documentElement.outerHTML);
-    fs.writeFileSync('page_debug.html', pageHtml);
-
-    const shadowBtns = await driver.executeScript(() => {
-      const results = [];
-      function findButtons(root, depth) {
-        root.querySelectorAll('button').forEach(b => results.push({
-          text: b.textContent.trim().substring(0, 30),
-          className: b.className.substring(0, 50),
-          type: b.type,
-          depth: depth,
-        }));
-        root.querySelectorAll('*').forEach(el => {
-          if (el.shadowRoot) findButtons(el.shadowRoot, depth + 1);
-        });
-      }
-      findButtons(document, 0);
-      return results;
-    });
-    console.log('Shadow DOM含む全ボタン:', JSON.stringify(shadowBtns, null, 2));
-
-    // ⑪ OKポップアップを閉じる
+    // ⑩ OKポップアップを閉じる
+    // OKボタンは<a>タグ（<button>ではない）
     console.log('OKポップアップを閉じます...');
     for (let i = 0; i < 10; i++) {
       try {
-        const okBtn = await driver.findElement(
-          By.xpath('//button[normalize-space(text())="OK"]')
-        );
-        await driver.executeScript('arguments[0].click();', okBtn);
-        console.log(`OKボタンをクリック（${i + 1}回目）`);
+        // <a>タグのOKボタン（li.ok > a）
+        const okLink = await driver.findElement(By.css('li.ok a'));
+        await driver.executeScript('arguments[0].click();', okLink);
+        console.log(`OKリンクをクリック（${i + 1}回目）`);
         await sleep(800);
       } catch (e) {
-        console.log(`OKボタンなし（${i}回クリック後）`);
-        break;
+        try {
+          // ng-clickのOKボタンも試す
+          const okBtn = await driver.findElement(By.xpath('//*[contains(@ng-click,"ok()") and not(contains(@ng-click,"book"))]'));
+          await driver.executeScript('arguments[0].click();', okBtn);
+          console.log(`OKボタン(ng-click)をクリック（${i + 1}回目）`);
+          await sleep(800);
+        } catch (e2) {
+          console.log(`OKボタンなし（${i}回クリック後）`);
+          break;
+        }
       }
     }
 
     await sleep(1500);
     await screenshot(driver, 'debug4b.png');
 
-    // ⑫ 「完了」ボタンをクリック
+    // ⑪ 「完了」ボタンをクリック
+    // 完了ボタンは collect-btn クラスのボタン（テキストはspanの中）
     console.log('完了ボタンをクリック中...');
     let submitSuccess = false;
 
+    // collect-btnクラスで直接探す（テキスト不要）
     try {
-      const completeBtn = await driver.findElement(
-        By.xpath('//button[normalize-space(text())="完了" and contains(@class,"collect-btn")]')
-      );
-      await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', completeBtn);
-      await sleep(500);
-      await driver.executeScript('arguments[0].click();', completeBtn);
-      console.log('完了ボタンクリック成功（collect-btn）');
-      submitSuccess = true;
+      const collectBtns = await driver.findElements(By.css('button.collect-btn'));
+      console.log(`collect-btnボタン数: ${collectBtns.length}`);
+
+      for (const btn of collectBtns) {
+        const isDisplayed = await btn.isDisplayed();
+        const isEnabled = await btn.isEnabled();
+        console.log(`ボタン: visible=${isDisplayed}, enabled=${isEnabled}`);
+
+        if (isDisplayed && isEnabled) {
+          await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', btn);
+          await sleep(500);
+          await driver.executeScript('arguments[0].click();', btn);
+          console.log('✅ collect-btnをクリックしました');
+          submitSuccess = true;
+          break;
+        }
+      }
     } catch (e) {
-      console.log('collect-btnで見つからず...');
+      console.log('collect-btnエラー:', e.message);
+    }
+
+    // ng-clickで探す
+    if (!submitSuccess) {
+      try {
+        const btn = await driver.findElement(By.css('button[ng-click="collect()"]'));
+        const isDisplayed = await btn.isDisplayed();
+        if (isDisplayed) {
+          await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', btn);
+          await sleep(500);
+          await driver.executeScript('arguments[0].click();', btn);
+          console.log('✅ ng-click="collect()"ボタンをクリックしました');
+          submitSuccess = true;
+        }
+      } catch (e) {
+        console.log('ng-click collect()ボタンが見つかりません');
+      }
     }
 
     if (!submitSuccess) {
-      try {
-        const completeBtn = await driver.findElement(
-          By.xpath('//button[normalize-space(text())="完了"]')
-        );
-        await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', completeBtn);
-        await sleep(500);
-        await driver.executeScript('arguments[0].click();', completeBtn);
-        console.log('完了ボタンクリック成功');
-        submitSuccess = true;
-      } catch (e) {
-        console.log('完了ボタンが見つかりません:', e.message);
-      }
+      console.log('完了ボタンが見つかりませんでした');
     }
 
     await sleep(6000);
 
-    // ⑬ 投稿完了確認
+    // ⑫ 投稿完了確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
@@ -495,8 +492,7 @@ async function main() {
     return;
   }
 
-  // 調査のため1件のみ実行
-  const targetItems = items.slice(0, 1);
+  const targetItems = items.slice(0, 3);
 
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
