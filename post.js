@@ -1,4 +1,5 @@
-const puppeteer = require('puppeteer');
+const { Builder, By, until, Key } = require('selenium-webdriver');
+const chrome = require('selenium-webdriver/chrome');
 const { google } = require('googleapis');
 
 // ============================================================
@@ -88,135 +89,132 @@ async function markAsPosted(rowIndex) {
 }
 
 // ============================================================
-// ログイン処理
+// Seleniumドライバーを作成
 // ============================================================
-async function loginToRakuten(page) {
-  const loginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
+function createDriver() {
+  const options = new chrome.Options();
+  options.addArguments('--headless');
+  options.addArguments('--no-sandbox');
+  options.addArguments('--disable-dev-shm-usage');
+  options.addArguments('--disable-gpu');
+  options.addArguments('--window-size=1280,800');
+  options.addArguments('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-  console.log('ブックマーク認証URLにアクセス中...');
-  await page.goto(loginUrl, { waitUntil: 'networkidle2' });
-  await new Promise(r => setTimeout(r, 3000));
-
-  await page.screenshot({ path: 'debug_login.png', fullPage: false });
-  console.log('ログインページURL:', page.url());
-
-  try {
-    const emailSelectors = [
-      'input[name="email"]',
-      'input[name="username"]',
-      'input[type="email"]',
-      'input[type="text"]',
-    ];
-
-    let emailInput = null;
-    for (const sel of emailSelectors) {
-      emailInput = await page.$(sel);
-      if (emailInput) {
-        console.log('メール入力欄発見:', sel);
-        break;
-      }
-    }
-
-    if (!emailInput) {
-      console.log('メール入力欄が見つかりません');
-      return false;
-    }
-
-    await emailInput.click({ clickCount: 3 });
-    await emailInput.type(CONFIG.EMAIL);
-    await new Promise(r => setTimeout(r, 1000));
-
-    const nextBtn = await page.$('button[type="submit"]');
-    if (nextBtn) {
-      await nextBtn.click();
-      await new Promise(r => setTimeout(r, 3000));
-    }
-
-    await page.screenshot({ path: 'debug_login2.png', fullPage: false });
-
-    const passInput = await page.$('input[type="password"]');
-    if (passInput) {
-      await passInput.click({ clickCount: 3 });
-      await passInput.type(CONFIG.PASS);
-      await new Promise(r => setTimeout(r, 1000));
-
-      const loginBtn = await page.$('button[type="submit"]');
-      if (loginBtn) {
-        await loginBtn.click();
-        await new Promise(r => setTimeout(r, 5000));
-      }
-    }
-
-    await page.screenshot({ path: 'debug_login3.png', fullPage: false });
-    console.log('ログイン後URL:', page.url());
-
-    if (page.url().includes('my.bookmark.rakuten.co.jp')) {
-      console.log('✅ ログイン成功');
-      return true;
-    } else {
-      console.log('❌ ログイン失敗');
-      return false;
-    }
-
-  } catch (e) {
-    console.log('ログインエラー:', e.message);
-    await page.screenshot({ path: 'debug_login_error.png', fullPage: false });
-    return false;
-  }
+  return new Builder()
+    .forBrowser('chrome')
+    .setChromeOptions(options)
+    .build();
 }
 
 // ============================================================
-// 楽天ROOMに投稿（お気に入りブックマーク経由）
+// スリープ
+// ============================================================
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ============================================================
+// 楽天ROOMに投稿
 // ============================================================
 async function postToRakutenRoom(item) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-    ],
-  });
-
-  const page = await browser.newPage();
-  page.setDefaultTimeout(30000);
+  const driver = await createDriver();
 
   try {
-    // ① ログイン
-    const loggedIn = await loginToRakuten(page);
-    if (!loggedIn) {
-      console.log('ログインに失敗しました。スキップします。');
-      await browser.close();
+    // ① 楽天にログイン
+    console.log('楽天にログイン中...');
+    const loginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
+    await driver.get(loginUrl);
+    await sleep(3000);
+
+    console.log('ログインページURL:', await driver.getCurrentUrl());
+    await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_login.png', img, 'base64'));
+
+    // メールアドレス入力
+    try {
+      const emailSelectors = [
+        By.name('email'),
+        By.name('username'),
+        By.css('input[type="email"]'),
+        By.css('input[type="text"]'),
+      ];
+
+      let emailInput = null;
+      for (const sel of emailSelectors) {
+        try {
+          emailInput = await driver.findElement(sel);
+          if (emailInput) {
+            console.log('メール入力欄発見');
+            break;
+          }
+        } catch (e) {}
+      }
+
+      if (!emailInput) {
+        console.log('メール入力欄が見つかりません');
+        return false;
+      }
+
+      await emailInput.clear();
+      await emailInput.sendKeys(CONFIG.EMAIL);
+      await sleep(1000);
+
+      // 次へボタン
+      const nextBtn = await driver.findElement(By.css('button[type="submit"]'));
+      await nextBtn.click();
+      await sleep(3000);
+
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_login2.png', img, 'base64'));
+      console.log('メール入力後URL:', await driver.getCurrentUrl());
+
+      // パスワード入力
+      const passInput = await driver.findElement(By.css('input[type="password"]'));
+      await passInput.clear();
+      await passInput.sendKeys(CONFIG.PASS);
+      await sleep(1000);
+
+      const loginBtn = await driver.findElement(By.css('button[type="submit"]'));
+      await loginBtn.click();
+      await sleep(5000);
+
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_login3.png', img, 'base64'));
+      console.log('ログイン後URL:', await driver.getCurrentUrl());
+
+    } catch (e) {
+      console.log('ログインエラー:', e.message);
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_login_error.png', img, 'base64'));
       return false;
     }
 
-    // ② 楽天トップページに移動してセッションを確立
-    console.log('楽天トップページに移動...');
-    await page.goto('https://www.rakuten.co.jp/?l-id=pc_header_logo', {
-      waitUntil: 'networkidle2'
-    });
-    await new Promise(r => setTimeout(r, 2000));
+    const loginedUrl = await driver.getCurrentUrl();
+    if (!loginedUrl.includes('my.bookmark.rakuten.co.jp')) {
+      console.log('ログイン失敗:', loginedUrl);
+      return false;
+    }
+    console.log('✅ ログイン成功');
+
+    // ② 楽天トップページでセッション確立
+    await driver.get('https://www.rakuten.co.jp/?l-id=pc_header_logo');
+    await sleep(2000);
 
     // ③ 商品ページを開く
     console.log(`商品ページを開く: ${item.itemName.substring(0, 30)}`);
-    await page.goto(item.itemUrl, { waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 3000));
-    await page.screenshot({ path: 'debug1.png', fullPage: false });
-    console.log('商品ページURL:', page.url());
+    await driver.get(item.itemUrl);
+    await sleep(3000);
+
+    await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug1.png', img, 'base64'));
+    console.log('商品ページURL:', await driver.getCurrentUrl());
 
     // クーポンポップアップを閉じる
     try {
-      const closeBtn = await page.$('[hint="ポップアップを閉じる"]');
-      if (closeBtn) {
-        await closeBtn.click();
-        await new Promise(r => setTimeout(r, 1000));
-        console.log('ポップアップを閉じました');
-      }
+      const closeBtn = await driver.findElement(By.css('[hint="ポップアップを閉じる"]'));
+      await closeBtn.click();
+      await sleep(1000);
+      console.log('ポップアップを閉じました');
     } catch (e) {}
 
-    // ④ お気に入り関連要素を全て調査
+    // ④ お気に入り関連要素を調査
     console.log('お気に入り関連要素を調査中...');
-    const pageElements = await page.evaluate(() => {
+    const bookmarkInfo = await driver.executeScript(() => {
       const els = Array.from(document.querySelectorAll('a, button, span, div'));
       return els
         .map(el => ({
@@ -224,7 +222,6 @@ async function postToRakutenRoom(item) {
           text: el.textContent.trim().substring(0, 40),
           href: el.href || '',
           className: el.className.substring(0, 80),
-          onclick: el.getAttribute('onclick') || '',
           id: el.id || '',
           dataRatid: el.getAttribute('data-ratid') || '',
         }))
@@ -233,134 +230,112 @@ async function postToRakutenRoom(item) {
           el.text.includes('ブックマーク') ||
           el.className.toLowerCase().includes('bookmark') ||
           el.className.toLowerCase().includes('favorite') ||
-          el.className.toLowerCase().includes('wish') ||
-          el.id.toLowerCase().includes('bookmark') ||
-          el.id.toLowerCase().includes('favorite') ||
           el.dataRatid.includes('bookmark') ||
-          el.dataRatid.includes('favorite') ||
           el.href.includes('bookmark')
         );
     });
-    console.log('お気に入り関連要素:', JSON.stringify(pageElements, null, 2));
+    console.log('お気に入り関連要素:', JSON.stringify(bookmarkInfo, null, 2));
 
-    // ⑤ お気に入りボタンをクリック（調査結果をもとに複数パターン試す）
+    // ⑤ お気に入りボタンをクリック
     console.log('お気に入りボタンをクリック中...');
     let bookmarkClicked = false;
 
-    // 調査で発見された要素をもとにクリックを試みる
     const bookmarkSelectors = [
-      // data-ratid属性で探す
-      '[data-ratid*="bookmark"]',
-      '[data-ratid*="favorite"]',
       '[data-ratid="item_bookmark"]',
-      // クラス名で探す
+      '[data-ratid*="bookmark"]',
       '.floatingBookmarkAreaWrapper',
-      '[class*="bookmark"]',
       '[class*="Bookmark"]',
-      '[class*="favorite"]',
-      '[class*="Favorite"]',
-      // テキストで探す
-      'button',
+      '[class*="bookmark"]',
     ];
 
-    for (const selector of bookmarkSelectors) {
+    for (const sel of bookmarkSelectors) {
       try {
-        if (selector === 'button') {
-          // ボタンの中からお気に入りテキストを含むものを探す
-          const clicked = await page.evaluate(() => {
-            const buttons = Array.from(document.querySelectorAll('button'));
-            const btn = buttons.find(b =>
-              b.textContent.includes('お気に入り') ||
-              b.textContent.includes('ブックマーク')
-            );
-            if (btn) {
-              btn.click();
-              return btn.textContent.trim();
-            }
-            return null;
-          });
-          if (clicked) {
-            console.log(`お気に入りボタンクリック成功（テキスト）: ${clicked}`);
-            bookmarkClicked = true;
-            break;
-          }
-        } else {
-          await page.waitForSelector(selector, { timeout: 2000 });
-          await page.click(selector);
-          console.log(`お気に入りボタンクリック成功: ${selector}`);
-          bookmarkClicked = true;
-          break;
-        }
+        const el = await driver.findElement(By.css(sel));
+        await driver.executeScript('arguments[0].click();', el);
+        console.log(`お気に入りボタンクリック成功: ${sel}`);
+        bookmarkClicked = true;
+        break;
       } catch (e) {
-        // 見つからなければ次を試す
+        console.log(`セレクタ未発見: ${sel}`);
       }
     }
 
+    // テキストで探す
     if (!bookmarkClicked) {
-      console.log('お気に入りボタンが見つかりません。スクリーンショットを確認してください。');
-      await page.screenshot({ path: 'debug_no_bookmark.png', fullPage: true });
-      await browser.close();
+      try {
+        const clicked = await driver.executeScript(() => {
+          const els = Array.from(document.querySelectorAll('button, a, span, div'));
+          const btn = els.find(el =>
+            el.textContent.includes('お気に入り') ||
+            el.textContent.includes('ブックマーク')
+          );
+          if (btn) {
+            btn.click();
+            return btn.textContent.trim();
+          }
+          return null;
+        });
+        if (clicked) {
+          console.log(`お気に入りボタンクリック成功（テキスト）: ${clicked}`);
+          bookmarkClicked = true;
+        }
+      } catch (e) {}
+    }
+
+    if (!bookmarkClicked) {
+      console.log('お気に入りボタンが見つかりません。スキップします。');
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_no_bookmark.png', img, 'base64'));
+      await driver.quit();
       return false;
     }
 
-    // ⑥ お気に入りブックマークページへの遷移を待つ
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 20000 }).catch(e => {
-      console.log('ナビゲーションタイムアウト（続行）:', e.message);
-    });
-    await new Promise(r => setTimeout(r, 3000));
-    const afterBookmarkUrl = page.url();
+    await sleep(5000);
+    const afterBookmarkUrl = await driver.getCurrentUrl();
     console.log('お気に入りボタン後URL:', afterBookmarkUrl);
-    await page.screenshot({ path: 'debug2.png', fullPage: true });
+    await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug2.png', img, 'base64'));
 
-    // ログインページに飛ばされた場合は再ログイン
+    // ログインページにリダイレクトされた場合は再ログイン
     if (afterBookmarkUrl.includes('login') || afterBookmarkUrl.includes('sign_in')) {
       console.log('ログインページにリダイレクト。再ログイン中...');
       try {
         const emailSelectors = [
-          'input[name="email"]',
-          'input[name="username"]',
-          'input[type="text"]',
+          By.name('email'),
+          By.name('username'),
+          By.css('input[type="text"]'),
         ];
         let emailInput = null;
         for (const sel of emailSelectors) {
-          emailInput = await page.$(sel);
-          if (emailInput) break;
+          try { emailInput = await driver.findElement(sel); break; } catch (e) {}
         }
         if (emailInput) {
-          await emailInput.click({ clickCount: 3 });
-          await emailInput.type(CONFIG.EMAIL);
-          const nextBtn = await page.$('button[type="submit"]');
-          if (nextBtn) {
-            await nextBtn.click();
-            await new Promise(r => setTimeout(r, 3000));
-          }
+          await emailInput.clear();
+          await emailInput.sendKeys(CONFIG.EMAIL);
+          const nextBtn = await driver.findElement(By.css('button[type="submit"]'));
+          await nextBtn.click();
+          await sleep(3000);
         }
 
-        const passInput = await page.$('input[type="password"]');
-        if (passInput) {
-          await passInput.click({ clickCount: 3 });
-          await passInput.type(CONFIG.PASS);
-          const loginBtn = await page.$('button[type="submit"]');
-          if (loginBtn) {
-            await loginBtn.click();
-            await new Promise(r => setTimeout(r, 5000));
-          }
-        }
+        const passInput = await driver.findElement(By.css('input[type="password"]'));
+        await passInput.clear();
+        await passInput.sendKeys(CONFIG.PASS);
+        const loginBtn = await driver.findElement(By.css('button[type="submit"]'));
+        await loginBtn.click();
+        await sleep(5000);
 
-        console.log('再ログイン後URL:', page.url());
-        await page.screenshot({ path: 'debug2b.png', fullPage: true });
+        console.log('再ログイン後URL:', await driver.getCurrentUrl());
+        await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug2b.png', img, 'base64'));
       } catch (e) {
         console.log('再ログイン失敗:', e.message);
-        await browser.close();
+        await driver.quit();
         return false;
       }
     }
 
-    // ⑦ お気に入り一覧で「ROOMに追加」を探す
+    // ⑥ ROOM関連要素を探す
     console.log('ROOM関連要素を検索中...');
-    await new Promise(r => setTimeout(r, 2000));
+    await sleep(2000);
 
-    const allElements = await page.evaluate(() => {
+    const roomElements = await driver.executeScript(() => {
       const elements = Array.from(document.querySelectorAll('a, button, [onclick]'));
       return elements
         .map(el => ({
@@ -377,80 +352,68 @@ async function postToRakutenRoom(item) {
           el.href.includes('room.rakuten')
         );
     });
-    console.log('ROOM関連要素:', JSON.stringify(allElements, null, 2));
+    console.log('ROOM関連要素:', JSON.stringify(roomElements, null, 2));
 
-    // ⑧ 「ROOMに追加」または「ROOMに投稿」をクリック
+    // ⑦ 「ROOMに追加」をクリック
     console.log('ROOMに追加リンクをクリック中...');
-    try {
-      const clicked = await page.evaluate(() => {
-        const links = Array.from(document.querySelectorAll('a, button, [onclick]'));
-        const roomLink = links.find(a =>
-          (a.href && a.href.includes('room.rakuten.co.jp/mix/collect')) ||
-          a.textContent.includes('ROOMに追加') ||
-          a.textContent.includes('ROOMに投稿') ||
-          a.textContent.includes('コレ！')
-        );
-        if (roomLink) {
-          roomLink.click();
-          return roomLink.href || roomLink.textContent;
-        }
-        return null;
-      });
-
-      if (clicked) {
-        console.log('ROOMリンククリック成功:', clicked);
-        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
-        await new Promise(r => setTimeout(r, 2000));
-      } else {
-        console.log('ROOMに追加リンクが見つかりません');
-        await page.screenshot({ path: 'debug3.png', fullPage: true });
-        await browser.close();
-        return false;
+    const roomClicked = await driver.executeScript(() => {
+      const links = Array.from(document.querySelectorAll('a, button, [onclick]'));
+      const roomLink = links.find(a =>
+        (a.href && a.href.includes('room.rakuten.co.jp/mix/collect')) ||
+        a.textContent.includes('ROOMに追加') ||
+        a.textContent.includes('ROOMに投稿') ||
+        a.textContent.includes('コレ！')
+      );
+      if (roomLink) {
+        roomLink.click();
+        return roomLink.href || roomLink.textContent;
       }
-    } catch (e) {
-      console.log('ROOMリンククリックエラー:', e.message);
-      await browser.close();
+      return null;
+    });
+
+    if (!roomClicked) {
+      console.log('ROOMに追加リンクが見つかりません');
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug3.png', img, 'base64'));
+      await driver.quit();
       return false;
     }
 
-    console.log('ROOMコレクトフォームURL:', page.url());
-    await page.screenshot({ path: 'debug3.png', fullPage: true });
+    console.log('ROOMリンククリック成功:', roomClicked);
+    await sleep(3000);
+    console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
+    await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug3.png', img, 'base64'));
 
-    // ⑨ 投稿フォームに紹介文を入力
+    // ⑧ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
-      await page.waitForSelector('#collect-content', { timeout: 10000 });
-      await page.evaluate(() => {
-        document.querySelector('#collect-content').value = '';
-      });
-      await page.evaluate((text) => {
-        document.querySelector('#collect-content').value = text;
-      }, item.postText);
+      await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
+      const textarea = await driver.findElement(By.id('collect-content'));
+      await driver.executeScript('arguments[0].value = "";', textarea);
+      await driver.executeScript('arguments[0].value = arguments[1];', textarea, item.postText);
       console.log('紹介文の入力完了');
     } catch (e) {
-      console.log('投稿フォームが見つかりません:', page.url());
-      await page.screenshot({ path: 'debug_no_form.png', fullPage: true });
-      await browser.close();
+      console.log('投稿フォームが見つかりません:', await driver.getCurrentUrl());
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_no_form.png', img, 'base64'));
+      await driver.quit();
       return false;
     }
 
-    await page.screenshot({ path: 'debug4.png', fullPage: false });
+    await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug4.png', img, 'base64'));
 
-    // ⑩ 「完了」ボタンをクリック
+    // ⑨ 「完了」ボタンをクリック
     console.log('「完了」ボタンをクリック中...');
     try {
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }),
-        page.click('button[type="submit"]'),
-      ]);
+      const submitBtn = await driver.findElement(By.css('button[type="submit"]'));
+      await submitBtn.click();
+      await sleep(5000);
     } catch (e) {
-      console.log('ナビゲーションなしで投稿完了の可能性:', e.message);
+      console.log('完了ボタンエラー:', e.message);
     }
 
-    // ⑪ 投稿完了確認
-    const finalUrl = page.url();
+    // ⑩ 投稿完了確認
+    const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
-    await page.screenshot({ path: 'debug_final.png', fullPage: false });
+    await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_final.png', img, 'base64'));
 
     if (
       finalUrl.includes('complete') ||
@@ -458,18 +421,20 @@ async function postToRakutenRoom(item) {
       finalUrl.includes('collect')
     ) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
-      await browser.close();
+      await driver.quit();
       return true;
     } else {
       console.log(`❌ 投稿失敗: ${finalUrl}`);
-      await browser.close();
+      await driver.quit();
       return false;
     }
 
   } catch (e) {
     console.error(`エラー: ${e.message}`);
-    await page.screenshot({ path: 'debug_error.png', fullPage: true }).catch(() => {});
-    await browser.close();
+    try {
+      await driver.takeScreenshot().then(img => require('fs').writeFileSync('debug_error.png', img, 'base64'));
+    } catch (_) {}
+    await driver.quit();
     return false;
   }
 }
@@ -478,7 +443,7 @@ async function postToRakutenRoom(item) {
 // メイン処理
 // ============================================================
 async function main() {
-  console.log('=== 楽天ROOM自動投稿開始 ===');
+  console.log('=== 楽天ROOM自動投稿開始（Selenium版）===');
 
   console.log('EM:', process.env.EM ? '設定済み' : '未設定');
   console.log('PW:', process.env.PW ? '設定済み' : '未設定');
@@ -503,7 +468,7 @@ async function main() {
       await markAsPosted(item.rowIndex);
     }
 
-    await new Promise(r => setTimeout(r, 5000));
+    await sleep(5000);
   }
 
   console.log('\n=== 楽天ROOM自動投稿完了 ===');
