@@ -331,6 +331,9 @@ async function postToRakutenRoom(item) {
       : item.itemCode;
     console.log('itemCode:', itemCodeFromUrl);
 
+    // nameは商品名の先頭50文字
+    const itemName = item.itemName.substring(0, 50);
+
     // ⑧ ROOMの投稿フォームにアクセス
     await driver.get(collectUrl);
     await sleep(3000);
@@ -350,6 +353,7 @@ async function postToRakutenRoom(item) {
     await driver.executeScript(`
       window.__apiCollectResult = null;
       window.__injectItemKey = arguments[0];
+      window.__injectName = arguments[1];
 
       const origOpen = XMLHttpRequest.prototype.open;
       const origSend = XMLHttpRequest.prototype.send;
@@ -362,29 +366,27 @@ async function postToRakutenRoom(item) {
 
       XMLHttpRequest.prototype.send = function(body) {
         const xhr = this;
-
-        // /api/collect のbodyにitem_keyを注入
         if (body && typeof body === 'string' && xhr.__url && xhr.__url.includes('/api/collect')) {
+          // item_keyを注入
           body = body.replace(/item_key=([^&]*)/, function(match, val) {
-            const newVal = val || encodeURIComponent(window.__injectItemKey);
-            console.log('item_key注入:', newVal);
-            return 'item_key=' + newVal;
+            return 'item_key=' + (val || encodeURIComponent(window.__injectItemKey));
+          });
+          // nameが空なら商品名を注入
+          body = body.replace(/name=([^&]*)/, function(match, val) {
+            return 'name=' + (val || encodeURIComponent(window.__injectName));
           });
 
-          // /api/collect のレスポンスを記録
           xhr.addEventListener('load', function() {
             window.__apiCollectResult = {
               status: xhr.status,
               response: xhr.responseText || '',
               url: xhr.__url
             };
-            console.log('/api/collect レスポンス:', xhr.status, xhr.responseText ? xhr.responseText.substring(0, 100) : '');
           });
         }
-
         return origSend.call(this, body);
       };
-    `, itemCodeFromUrl);
+    `, itemCodeFromUrl, itemName);
 
     // ⑩ OKポップアップを閉じる
     console.log('OKポップアップを閉じます...');
@@ -395,7 +397,7 @@ async function postToRakutenRoom(item) {
     }
     await sleep(1000);
 
-    // ⑪ 紹介文をAngularJSのスコープにセット
+    // ⑪ 紹介文・itemCode・nameをAngularJSのスコープにセット
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
@@ -406,12 +408,13 @@ async function postToRakutenRoom(item) {
         scope.$apply(function() {
           scope.collectContent = arguments[0];
           scope.itemCode = arguments[1];
+          scope.name = arguments[2];
           scope.isCollectDisabled = false;
           scope.isSubmitted = false;
-        }.bind(null, arguments[0], arguments[1]));
+        }.bind(null, arguments[0], arguments[1], arguments[2]));
         el.value = arguments[0];
         el.dispatchEvent(new Event('input', { bubbles: true }));
-      `, item.postText, itemCodeFromUrl);
+      `, item.postText, itemCodeFromUrl, itemName);
 
       console.log('紹介文入力完了');
 
@@ -442,7 +445,7 @@ async function postToRakutenRoom(item) {
       await sleep(1000);
       apiResult = await driver.executeScript(`return window.__apiCollectResult;`);
       if (apiResult) {
-        console.log(`APIレスポンス取得（${i + 1}秒後）:`, JSON.stringify(apiResult));
+        console.log(`APIレスポンス（${i + 1}秒後）: status=${apiResult.status} response=${apiResult.response.substring(0, 100)}`);
         break;
       }
     }
@@ -490,7 +493,7 @@ async function main() {
     return;
   }
 
-  const targetItems = items.slice(0, 1);
+  const targetItems = items.slice(0, 3);
 
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
