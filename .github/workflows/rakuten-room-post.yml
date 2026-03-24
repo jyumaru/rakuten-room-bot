@@ -1,0 +1,41 @@
+name: 楽天ROOM自動投稿
+
+on:
+  schedule:
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+      - name: Node.jsをセットアップ
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 依存パッケージをインストール
+        run: npm install
+      - name: 楽天ROOMに自動投稿
+        env:
+          EM:  ${{ secrets.EM }}
+          PW:  ${{ secrets.PW }}
+          SID: ${{ secrets.SID }}
+          GSA: ${{ secrets.GSA }}
+        run: node post.js
+      - name: スクリーンショットをアップロード
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-screenshots
+          path: |
+            debug_login.png
+            debug_login2.png
+            debug_login3.png
+            debug1.png
+            debug2.png
+            debug3.png
+            debug_final.png
+            debug_error.png
+          if-no-files-found: ignore
