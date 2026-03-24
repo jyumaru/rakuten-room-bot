@@ -88,6 +88,98 @@ async function markAsPosted(rowIndex) {
 }
 
 // ============================================================
+// ログイン処理（SPA対応）
+// ============================================================
+async function loginToRakuten(page) {
+  // ブックマーク専用のログインURLに直接アクセス
+  const loginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
+
+  console.log('ログインページにアクセス中...');
+  await page.goto(loginUrl, { waitUntil: 'networkidle2' });
+  await new Promise(r => setTimeout(r, 3000));
+
+  await page.screenshot({ path: 'debug_login.png', fullPage: false });
+  console.log('ログインページURL:', page.url());
+
+  // input要素を確認
+  const inputs = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('input')).map(el => ({
+      type: el.type, name: el.name, id: el.id, placeholder: el.placeholder
+    }));
+  });
+  console.log('input要素:', JSON.stringify(inputs));
+
+  try {
+    // メールアドレス入力（name="email" または他のパターン）
+    const emailSelectors = [
+      'input[name="email"]',
+      'input[name="username"]',
+      'input[type="email"]',
+      'input[type="text"]',
+    ];
+
+    let emailInput = null;
+    for (const sel of emailSelectors) {
+      emailInput = await page.$(sel);
+      if (emailInput) {
+        console.log('メール入力欄発見:', sel);
+        break;
+      }
+    }
+
+    if (!emailInput) {
+      console.log('メール入力欄が見つかりません');
+      return false;
+    }
+
+    await emailInput.click({ clickCount: 3 });
+    await emailInput.type(CONFIG.EMAIL);
+    await new Promise(r => setTimeout(r, 1000));
+
+    // 次へボタンをクリック
+    const nextBtn = await page.$('button[type="submit"]');
+    if (nextBtn) {
+      await nextBtn.click();
+      await new Promise(r => setTimeout(r, 3000));
+    }
+
+    await page.screenshot({ path: 'debug_login2.png', fullPage: false });
+    console.log('メール入力後URL:', page.url());
+
+    // パスワード入力
+    const passInput = await page.$('input[type="password"]');
+    if (passInput) {
+      await passInput.click({ clickCount: 3 });
+      await passInput.type(CONFIG.PASS);
+      await new Promise(r => setTimeout(r, 1000));
+
+      const loginBtn = await page.$('button[type="submit"]');
+      if (loginBtn) {
+        await loginBtn.click();
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+
+    await page.screenshot({ path: 'debug_login3.png', fullPage: false });
+    console.log('ログイン後URL:', page.url());
+
+    // my.bookmark.rakuten.co.jp に到達したらログイン成功
+    if (page.url().includes('my.bookmark.rakuten.co.jp')) {
+      console.log('✅ ログイン成功（ブックマークページに到達）');
+      return true;
+    } else {
+      console.log('❌ ログイン失敗（ブックマークページに到達できず）');
+      return false;
+    }
+
+  } catch (e) {
+    console.log('ログインエラー:', e.message);
+    await page.screenshot({ path: 'debug_login_error.png', fullPage: false });
+    return false;
+  }
+}
+
+// ============================================================
 // 楽天ROOMに投稿（お気に入りブックマーク経由）
 // ============================================================
 async function postToRakutenRoom(item) {
@@ -104,91 +196,12 @@ async function postToRakutenRoom(item) {
   page.setDefaultTimeout(30000);
 
   try {
-    // ① 楽天トップページからログイン
-    console.log('楽天にログイン中...');
-    await page.goto('https://www.rakuten.co.jp/', { waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 2000));
-
-    // ログインリンクを探してクリック
-    try {
-      const loginLink = await page.$('a[href*="login"]');
-      if (loginLink) {
-        await loginLink.click();
-        await page.waitForNavigation({ waitUntil: 'networkidle2' });
-      }
-    } catch (e) {
-      console.log('ログインリンククリックエラー:', e.message);
-    }
-
-    await page.screenshot({ path: 'debug_login.png', fullPage: false });
-    console.log('ログインページURL:', page.url());
-
-    // input要素を調査してログ出力
-    const inputs = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('input')).map(el => ({
-        type: el.type,
-        name: el.name,
-        id: el.id,
-        placeholder: el.placeholder
-      }));
-    });
-    console.log('input要素:', JSON.stringify(inputs, null, 2));
-
-    try {
-      // メールアドレス入力（複数パターンを試す）
-      const emailSelectors = [
-        'input[name="username"]',
-        'input[name="u"]',
-        'input[type="email"]',
-        'input[id="email"]',
-        'input[placeholder*="メール"]',
-        'input[placeholder*="ID"]',
-      ];
-
-      let emailInput = null;
-      for (const sel of emailSelectors) {
-        emailInput = await page.$(sel);
-        if (emailInput) {
-          console.log('メール入力欄発見:', sel);
-          break;
-        }
-      }
-
-      if (emailInput) {
-        await emailInput.type(CONFIG.EMAIL);
-
-        // 次へボタンをクリック
-        const nextBtn = await page.$('button[type="submit"], input[type="submit"]');
-        if (nextBtn) {
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
-            nextBtn.click(),
-          ]);
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      }
-
-      await page.screenshot({ path: 'debug_login2.png', fullPage: false });
-      console.log('メール入力後URL:', page.url());
-
-      // パスワード入力
-      const passInput = await page.$('input[type="password"]');
-      if (passInput) {
-        await passInput.type(CONFIG.PASS);
-        await Promise.all([
-          page.waitForNavigation({ waitUntil: 'networkidle2' }),
-          page.click('button[type="submit"], input[type="submit"]'),
-        ]);
-      }
-
-      console.log('ログイン完了');
-      await new Promise(r => setTimeout(r, 3000));
-      console.log('ログイン後URL:', page.url());
-      await page.screenshot({ path: 'debug_login3.png', fullPage: false });
-
-    } catch (e) {
-      console.log('ログインエラー:', e.message);
-      await page.screenshot({ path: 'debug_login_error.png', fullPage: false });
+    // ① 楽天にログイン
+    const loggedIn = await loginToRakuten(page);
+    if (!loggedIn) {
+      console.log('ログインに失敗しました。スキップします。');
+      await browser.close();
+      return false;
     }
 
     // ② 商品ページを開く
@@ -248,44 +261,32 @@ async function postToRakutenRoom(item) {
     console.log('遷移先URL:', bookmarkUrl);
     await page.screenshot({ path: 'debug2.png', fullPage: true });
 
-    // ログインページに飛ばされた場合は再ログイン
+    // まだログインページの場合は再ログイン試行
     if (bookmarkUrl.includes('login') || bookmarkUrl.includes('sign_in')) {
-      console.log('ログインページにリダイレクトされました。再ログインします...');
+      console.log('まだログインページです。再ログイン試行...');
       try {
-        const emailSelectors = [
-          'input[name="username"]',
-          'input[name="u"]',
-          'input[type="email"]',
-          'input[id="email"]',
-        ];
-
-        let emailInput = null;
-        for (const sel of emailSelectors) {
-          emailInput = await page.$(sel);
-          if (emailInput) break;
-        }
-        if (emailInput) await emailInput.type(CONFIG.EMAIL);
-
-        const nextBtn = await page.$('button[type="submit"], input[type="submit"]');
-        if (nextBtn) {
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2' }).catch(() => {}),
-            nextBtn.click(),
-          ]);
-          await new Promise(r => setTimeout(r, 2000));
+        const emailInput = await page.$('input[name="email"], input[name="username"], input[type="text"]');
+        if (emailInput) {
+          await emailInput.click({ clickCount: 3 });
+          await emailInput.type(CONFIG.EMAIL);
+          const nextBtn = await page.$('button[type="submit"]');
+          if (nextBtn) {
+            await nextBtn.click();
+            await new Promise(r => setTimeout(r, 3000));
+          }
         }
 
         const passInput = await page.$('input[type="password"]');
         if (passInput) {
+          await passInput.click({ clickCount: 3 });
           await passInput.type(CONFIG.PASS);
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle2' }),
-            page.click('button[type="submit"], input[type="submit"]'),
-          ]);
+          const loginBtn = await page.$('button[type="submit"]');
+          if (loginBtn) {
+            await loginBtn.click();
+            await new Promise(r => setTimeout(r, 5000));
+          }
         }
 
-        console.log('再ログイン完了');
-        await new Promise(r => setTimeout(r, 3000));
         console.log('再ログイン後URL:', page.url());
         await page.screenshot({ path: 'debug2b.png', fullPage: true });
       } catch (e) {
@@ -304,7 +305,6 @@ async function postToRakutenRoom(item) {
           tag: el.tagName,
           text: el.textContent.trim().substring(0, 50),
           href: el.href || '',
-          onclick: el.getAttribute('onclick') || '',
           className: el.className.substring(0, 50)
         }))
         .filter(el =>
