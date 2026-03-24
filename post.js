@@ -115,7 +115,6 @@ async function screenshot(driver, filename) {
   try {
     const img = await driver.takeScreenshot();
     fs.writeFileSync(filename, img, 'base64');
-    console.log(`スクリーンショット: ${filename}`);
   } catch (e) {}
 }
 
@@ -124,7 +123,6 @@ async function screenshot(driver, filename) {
 // ============================================================
 async function performLogin(driver, screenshotPrefix, successUrlContains) {
   console.log('ログイン処理開始...');
-  await screenshot(driver, `${screenshotPrefix}_1.png`);
 
   try {
     let emailInput = null;
@@ -140,10 +138,7 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
         try {
           await driver.wait(until.elementLocated(sel), 3000);
           emailInput = await driver.findElement(sel);
-          if (emailInput) {
-            console.log(`メール入力欄発見（${attempt + 1}回目）`);
-            break;
-          }
+          if (emailInput) break;
         } catch (e) {}
       }
       if (emailInput) break;
@@ -155,7 +150,6 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
       return false;
     }
 
-    console.log('メールアドレスを入力中...');
     await emailInput.clear();
     await emailInput.sendKeys(CONFIG.EMAIL);
     await sleep(1000);
@@ -167,11 +161,9 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
       await emailInput.sendKeys(Key.RETURN);
     }
     await sleep(3000);
-    await screenshot(driver, `${screenshotPrefix}_2.png`);
 
     await driver.wait(until.elementLocated(By.css('input[type="password"]')), 10000);
     const passInput = await driver.findElement(By.css('input[type="password"]'));
-    console.log('パスワードを入力中...');
     await passInput.clear();
 
     for (const char of CONFIG.PASS) {
@@ -187,25 +179,20 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
       await passInput.sendKeys(Key.RETURN);
     }
 
-    console.log(`リダイレクト待機中... (目標URL: ${successUrlContains})`);
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
       const url = await driver.getCurrentUrl();
       if (url.includes(successUrlContains) && !url.includes('sign_in') && !url.includes('login')) {
         console.log(`✅ ログイン成功: ${url}`);
-        await screenshot(driver, `${screenshotPrefix}_3.png`);
         return true;
       }
     }
 
-    const finalUrl = await driver.getCurrentUrl();
-    console.log('❌ ログイン失敗（タイムアウト）:', finalUrl);
-    await screenshot(driver, `${screenshotPrefix}_failed.png`);
+    console.log('❌ ログイン失敗:', await driver.getCurrentUrl());
     return false;
 
   } catch (e) {
     console.log('ログインエラー:', e.message);
-    await screenshot(driver, `${screenshotPrefix}_error.png`);
     return false;
   }
 }
@@ -253,10 +240,8 @@ async function postToRakutenRoom(item) {
     }
 
     // ② 楽天ROOMのセッション確立
-    console.log('楽天ROOMのセッション確立中...');
     await driver.get('https://login.account.rakuten.com/sso/authorize?client_id=rakuten_room_web&redirect_uri=https://room.rakuten.co.jp/common/callback&scope=openid&response_type=code&state=login#/sign_in');
     await sleep(5000);
-    console.log('ROOMセッション確立後URL:', await driver.getCurrentUrl());
 
     // ③ 楽天トップページでセッション確立
     await driver.get('https://www.rakuten.co.jp/?l-id=pc_header_logo');
@@ -268,7 +253,6 @@ async function postToRakutenRoom(item) {
     await sleep(3000);
     await screenshot(driver, 'debug1.png');
 
-    // クーポンポップアップを閉じる
     try {
       const closeBtn = await driver.findElement(By.css('[hint="ポップアップを閉じる"]'));
       await closeBtn.click();
@@ -331,7 +315,6 @@ async function postToRakutenRoom(item) {
 
     if (!roomLink) {
       console.log('ROOMリンクが見つかりません');
-      await screenshot(driver, 'debug3.png');
       await driver.quit();
       return false;
     }
@@ -341,13 +324,12 @@ async function postToRakutenRoom(item) {
     let collectUrl = roomLink.includes('/mix?')
       ? roomLink.replace('/mix?', '/mix/collect?')
       : roomLink;
-    console.log('投稿フォームURL:', collectUrl);
 
     const itemCodeMatch = collectUrl.match(/itemcode=([^&]+)/);
     const itemCodeFromUrl = itemCodeMatch
       ? decodeURIComponent(itemCodeMatch[1])
       : item.itemCode;
-    console.log('itemCode（URLから）:', itemCodeFromUrl);
+    console.log('itemCode:', itemCodeFromUrl);
 
     // ⑧ ROOMの投稿フォームにアクセス
     await driver.get(collectUrl);
@@ -355,66 +337,67 @@ async function postToRakutenRoom(item) {
 
     const curUrl = await driver.getCurrentUrl();
     if (curUrl.includes('login') || curUrl.includes('sign_in') || curUrl.includes('403')) {
-      console.log('ROOMログインページ/403検出。ログイン中...');
+      console.log('ROOMログイン必要。ログイン中...');
       await performLogin(driver, 'debug_room_relogin', 'room.rakuten.co.jp');
       await sleep(3000);
       await driver.get(collectUrl);
       await sleep(3000);
     }
 
-    console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ XHRを傍受してitem_keyを注入
+    // ⑨ XHRを傍受してcollect_complete（投稿完了）を検出
     await driver.executeScript(`
       window.__xhrLog = [];
+      window.__collectComplete = false;
       window.__injectItemKey = arguments[0];
-      const origSend = XMLHttpRequest.prototype.send;
-      XMLHttpRequest.prototype.send = function(body) {
-        if (body && typeof body === 'string' && body.includes('item_key=') && body.includes('/api/collect')) {
-          // item_keyが空の場合だけ注入
-          body = body.replace(/item_key=([^&]*)/, 'item_key=' + encodeURIComponent(window.__injectItemKey));
-          console.log('item_key注入後body:', body.substring(0, 200));
-        }
-        if (body && typeof body === 'string' && this.__url && this.__url.includes('/api/collect')) {
-          body = body.replace(/item_key=([^&]*)/, function(match, val) {
-            if (!val) return 'item_key=' + encodeURIComponent(window.__injectItemKey);
-            return match;
-          });
-        }
-        window.__xhrLog.push({url: this.__url, body: body ? body.substring(0, 300) : ''});
-        const xhr = this;
-        xhr.addEventListener('load', function() {
-          window.__xhrLog.push({
-            url: xhr.__url,
-            status: xhr.status,
-            response: xhr.responseText ? xhr.responseText.substring(0, 300) : ''
-          });
-        });
-        return origSend.call(this, body);
-      };
 
       const origOpen = XMLHttpRequest.prototype.open;
+      const origSend = XMLHttpRequest.prototype.send;
+
       XMLHttpRequest.prototype.open = function(method, url) {
         this.__url = url;
         this.__method = method;
         return origOpen.apply(this, arguments);
       };
+
+      XMLHttpRequest.prototype.send = function(body) {
+        const xhr = this;
+        // collect APIのitem_keyを注入
+        if (body && typeof body === 'string' && xhr.__url && xhr.__url.includes('/api/collect')) {
+          body = body.replace(/item_key=([^&]*)/, function(match, val) {
+            return val ? match : 'item_key=' + encodeURIComponent(window.__injectItemKey);
+          });
+        }
+        xhr.addEventListener('load', function() {
+          window.__xhrLog.push({
+            url: xhr.__url,
+            status: xhr.status,
+            response: xhr.responseText ? xhr.responseText.substring(0, 200) : ''
+          });
+          // collect_completeが来たら成功フラグを立てる
+          if (xhr.__url && xhr.__url.includes('collect_complete')) {
+            window.__collectComplete = true;
+          }
+          // /api/collect が200なら成功
+          if (xhr.__url && xhr.__url.includes('/api/collect') && xhr.status === 200) {
+            window.__collectComplete = true;
+          }
+        });
+        return origSend.call(this, body);
+      };
     `, itemCodeFromUrl);
 
-    // ⑩ 最初のOKポップアップを閉じる
+    // ⑩ OKポップアップを閉じる
     console.log('OKポップアップを閉じます...');
     for (let i = 0; i < 10; i++) {
       const clicked = await clickOkPopup(driver);
-      if (!clicked) {
-        console.log(`OKボタンなし（${i}回クリック後）`);
-        break;
-      }
+      if (!clicked) break;
       console.log(`OKクリック ${i + 1}回目`);
     }
     await sleep(1000);
 
-    // ⑪ 紹介文とitemCodeをAngularJSのスコープに直接セット
+    // ⑪ 紹介文をAngularJSのスコープにセット
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
@@ -432,16 +415,7 @@ async function postToRakutenRoom(item) {
         el.dispatchEvent(new Event('input', { bubbles: true }));
       `, item.postText, itemCodeFromUrl);
 
-      const scopeVars = await driver.executeScript(`
-        const el = document.querySelector('#collect-content');
-        const scope = angular.element(el).scope();
-        return {
-          collectContent: (scope.collectContent || '').length + '文字',
-          isCollectDisabled: scope.isCollectDisabled,
-          itemCode: scope.itemCode || 'なし',
-        };
-      `);
-      console.log('スコープ変数:', JSON.stringify(scopeVars));
+      console.log('紹介文入力完了');
 
     } catch (e) {
       console.log('投稿フォームエラー:', e.message);
@@ -463,58 +437,39 @@ async function postToRakutenRoom(item) {
       } catch(e) { console.error(e); }
     `);
 
-    await sleep(5000);
-
-    // XHRログを確認
-    const xhrLog = await driver.executeScript(`return window.__xhrLog || [];`);
-    console.log('XHRログ:', JSON.stringify(xhrLog, null, 2));
-
-    await screenshot(driver, 'debug4b.png');
-
-    // ⑬ 投稿後のポップアップを閉じる
-    for (let i = 0; i < 10; i++) {
-      const clicked = await clickOkPopup(driver);
-      if (clicked) {
-        console.log(`投稿後OKポップアップをクリック（${i + 1}回目）`);
-        await sleep(1000);
-      } else {
+    // ⑬ collect_completeを最大15秒待つ
+    console.log('投稿完了を待機中...');
+    let postSuccess = false;
+    for (let i = 0; i < 15; i++) {
+      await sleep(1000);
+      const complete = await driver.executeScript(`return window.__collectComplete || false;`);
+      if (complete) {
+        console.log(`✅ collect_complete検出（${i + 1}秒後）`);
+        postSuccess = true;
         break;
       }
     }
 
-    await sleep(3000);
     await screenshot(driver, 'debug_final.png');
+    console.log('投稿後URL:', await driver.getCurrentUrl());
 
-    const finalUrl = await driver.getCurrentUrl();
-    console.log('投稿後URL:', finalUrl);
-
-    // POSTのレスポンスを確認
-    const postResponse = (xhrLog || []).find(x => x.status && x.url && x.url.includes('/api/collect'));
-    console.log('POSTレスポンス:', JSON.stringify(postResponse));
-
-    const finalScope = await driver.executeScript(`
-      try {
-        const el = document.querySelector('#collect-content');
-        if (!el) return {noElement: true};
-        const scope = angular.element(el).scope();
-        return { isSubmitted: scope ? scope.isSubmitted : false };
-      } catch(e) { return {error: e.message}; }
-    `);
-    console.log('最終スコープ:', JSON.stringify(finalScope));
-
-    if (
-      (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('/mix/collect') && !finalUrl.includes('login')) ||
-      finalScope.isSubmitted === true ||
-      (postResponse && postResponse.status === 200)
-    ) {
+    if (postSuccess) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
+    } else {
+      // XHRログを確認
+      const xhrLog = await driver.executeScript(`return window.__xhrLog || [];`);
+      const hasCollectComplete = xhrLog.some(x => x.url && x.url.includes('collect_complete'));
+      if (hasCollectComplete) {
+        console.log(`✅ 投稿成功（XHRログ確認）: ${item.itemName.substring(0, 40)}`);
+        await driver.quit();
+        return true;
+      }
+      console.log(`❌ 投稿失敗`);
+      await driver.quit();
+      return false;
     }
-
-    console.log(`❌ 投稿失敗: ${finalUrl}`);
-    await driver.quit();
-    return false;
 
   } catch (e) {
     console.error(`エラー: ${e.message}`);
@@ -543,8 +498,7 @@ async function main() {
     return;
   }
 
-  // 調査のため1件のみ
-  const targetItems = items.slice(0, 1);
+  const targetItems = items.slice(0, 3);
 
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
