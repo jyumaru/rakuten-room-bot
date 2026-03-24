@@ -121,51 +121,93 @@ async function screenshot(driver, filename) {
   try {
     const img = await driver.takeScreenshot();
     fs.writeFileSync(filename, img, 'base64');
-    console.log(`スクリーンショット保存: ${filename}`);
+    console.log(`スクリーンショット: ${filename}`);
   } catch (e) {}
 }
 
 // ============================================================
-// ボタンをクリック（複数パターン試す）
+// ログイン処理（共通）
 // ============================================================
-async function clickButton(driver) {
-  const selectors = [
-    'button[type="submit"]',
-    'input[type="submit"]',
-    'button.btn-primary',
-    'button.login-btn',
-    'button.next-btn',
-    'button',
-  ];
+async function performLogin(driver, screenshotPrefix) {
+  console.log('ログイン処理開始...');
+  await screenshot(driver, `${screenshotPrefix}_1.png`);
 
-  for (const sel of selectors) {
+  try {
+    // メールアドレス入力
+    const emailSelectors = [
+      By.name('email'),
+      By.name('username'),
+      By.css('input[type="email"]'),
+      By.css('input[type="text"]'),
+    ];
+
+    let emailInput = null;
+    for (const sel of emailSelectors) {
+      try {
+        emailInput = await driver.findElement(sel);
+        if (emailInput) break;
+      } catch (e) {}
+    }
+
+    if (!emailInput) {
+      console.log('メール入力欄が見つかりません');
+      return false;
+    }
+
+    console.log('メールアドレスを入力中...');
+    await emailInput.clear();
+    await emailInput.sendKeys(CONFIG.EMAIL);
+    await sleep(1000);
+
+    // 次へボタン or Enterキー
     try {
-      const buttons = await driver.findElements(By.css(sel));
-      for (const btn of buttons) {
-        const text = await btn.getText();
-        const visible = await btn.isDisplayed();
-        if (visible) {
-          console.log(`ボタン発見: ${sel} テキスト:「${text}」`);
-          await driver.executeScript('arguments[0].click();', btn);
-          return true;
-        }
-      }
-    } catch (e) {}
+      const btn = await driver.findElement(By.css('button[type="submit"]'));
+      await driver.executeScript('arguments[0].click();', btn);
+    } catch (e) {
+      await emailInput.sendKeys(Key.RETURN);
+    }
+    await sleep(3000);
+    await screenshot(driver, `${screenshotPrefix}_2.png`);
+
+    // パスワード入力
+    const passInput = await driver.findElement(By.css('input[type="password"]'));
+    console.log('パスワードを入力中...');
+    await passInput.clear();
+    await passInput.sendKeys(CONFIG.PASS);
+    await sleep(1000);
+
+    // ログインボタン or Enterキー
+    try {
+      const btn = await driver.findElement(By.css('button[type="submit"]'));
+      await driver.executeScript('arguments[0].click();', btn);
+    } catch (e) {
+      await passInput.sendKeys(Key.RETURN);
+    }
+    await sleep(5000);
+
+    await screenshot(driver, `${screenshotPrefix}_3.png`);
+    console.log('ログイン後URL:', await driver.getCurrentUrl());
+    return true;
+
+  } catch (e) {
+    console.log('ログインエラー:', e.message);
+    await screenshot(driver, `${screenshotPrefix}_error.png`);
+    return false;
   }
+}
 
-  // JSでボタンを全て調査
-  const btnInfo = await driver.executeScript(() => {
-    return Array.from(document.querySelectorAll('button, input[type="submit"]'))
-      .map(el => ({
-        tag: el.tagName,
-        type: el.type,
-        text: el.textContent.trim().substring(0, 30),
-        className: el.className.substring(0, 50),
-        visible: el.offsetParent !== null
-      }));
-  });
-  console.log('ページ内ボタン一覧:', JSON.stringify(btnInfo, null, 2));
-
+// ============================================================
+// ログインが必要なURLかチェックして自動ログイン
+// ============================================================
+async function handleLoginIfNeeded(driver, screenshotPrefix) {
+  const url = await driver.getCurrentUrl();
+  if (url.includes('login') || url.includes('sign_in')) {
+    console.log('ログインページを検出。自動ログイン中...');
+    await performLogin(driver, screenshotPrefix);
+    await sleep(3000);
+    console.log('ログイン後URL:', await driver.getCurrentUrl());
+    return true;
+  }
   return false;
 }
 
@@ -176,92 +218,40 @@ async function postToRakutenRoom(item) {
   const driver = await createDriver();
 
   try {
-    // ① 楽天にログイン
+    // ① 楽天ブックマーク認証URLでログイン
     console.log('楽天にログイン中...');
     const loginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
     await driver.get(loginUrl);
     await sleep(3000);
 
     console.log('ログインページURL:', await driver.getCurrentUrl());
-    await screenshot(driver, 'debug_login.png');
-
-    try {
-      // メールアドレス入力
-      const emailSelectors = [
-        By.name('email'),
-        By.name('username'),
-        By.css('input[type="email"]'),
-        By.css('input[type="text"]'),
-      ];
-
-      let emailInput = null;
-      for (const sel of emailSelectors) {
-        try {
-          emailInput = await driver.findElement(sel);
-          if (emailInput) {
-            console.log('メール入力欄発見');
-            break;
-          }
-        } catch (e) {}
-      }
-
-      if (!emailInput) {
-        console.log('メール入力欄が見つかりません');
-        return false;
-      }
-
-      await emailInput.clear();
-      await emailInput.sendKeys(CONFIG.EMAIL);
-      await sleep(1000);
-
-      // 次へボタンをクリック（複数パターン試す）
-      const btnClicked = await clickButton(driver);
-      if (!btnClicked) {
-        // Enterキーで送信
-        console.log('ボタンが見つからないためEnterキーで送信');
-        await emailInput.sendKeys(Key.RETURN);
-      }
-      await sleep(3000);
-
-      await screenshot(driver, 'debug_login2.png');
-      console.log('メール入力後URL:', await driver.getCurrentUrl());
-
-      // パスワード入力
-      const passInput = await driver.findElement(By.css('input[type="password"]'));
-      await passInput.clear();
-      await passInput.sendKeys(CONFIG.PASS);
-      await sleep(1000);
-
-      // ログインボタン
-      const loginClicked = await clickButton(driver);
-      if (!loginClicked) {
-        await passInput.sendKeys(Key.RETURN);
-      }
-      await sleep(5000);
-
-      await screenshot(driver, 'debug_login3.png');
-      console.log('ログイン後URL:', await driver.getCurrentUrl());
-
-    } catch (e) {
-      console.log('ログインエラー:', e.message);
-      await screenshot(driver, 'debug_login_error.png');
-      await driver.quit();
-      return false;
-    }
+    await performLogin(driver, 'debug_login');
 
     const loginedUrl = await driver.getCurrentUrl();
     if (!loginedUrl.includes('my.bookmark.rakuten.co.jp')) {
-      console.log('ログイン失敗:', loginedUrl);
+      console.log('ブックマークログイン失敗:', loginedUrl);
       await driver.quit();
       return false;
     }
-    console.log('✅ ログイン成功');
+    console.log('✅ ブックマークログイン成功');
 
-    // ② 楽天トップページでセッション確立
+    // ② 楽天ROOMにもログイン
+    console.log('楽天ROOMにログイン中...');
+    const roomLoginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_room_web&redirect_uri=https://room.rakuten.co.jp/common/callback&scope=openid&response_type=code&state=login#/sign_in';
+    await driver.get(roomLoginUrl);
+    await sleep(3000);
+
+    await performLogin(driver, 'debug_room_login');
+
+    const roomLoginedUrl = await driver.getCurrentUrl();
+    console.log('ROOMログイン後URL:', roomLoginedUrl);
+    await screenshot(driver, 'debug_room_logined.png');
+
+    // ③ 楽天トップページでセッション確立
     await driver.get('https://www.rakuten.co.jp/?l-id=pc_header_logo');
     await sleep(2000);
 
-    // ③ 商品ページを開く
+    // ④ 商品ページを開く
     console.log(`商品ページを開く: ${item.itemName.substring(0, 30)}`);
     await driver.get(item.itemUrl);
     await sleep(3000);
@@ -277,7 +267,7 @@ async function postToRakutenRoom(item) {
       console.log('ポップアップを閉じました');
     } catch (e) {}
 
-    // ④ お気に入り関連要素を調査
+    // ⑤ お気に入り関連要素を調査
     console.log('お気に入り関連要素を調査中...');
     const bookmarkInfo = await driver.executeScript(() => {
       const els = Array.from(document.querySelectorAll('a, button, span, div'));
@@ -301,7 +291,7 @@ async function postToRakutenRoom(item) {
     });
     console.log('お気に入り関連要素:', JSON.stringify(bookmarkInfo, null, 2));
 
-    // ⑤ お気に入りボタンをクリック
+    // ⑥ お気に入りボタンをクリック
     console.log('お気に入りボタンをクリック中...');
     let bookmarkClicked = false;
 
@@ -325,7 +315,6 @@ async function postToRakutenRoom(item) {
       }
     }
 
-    // テキストで探す
     if (!bookmarkClicked) {
       const clicked = await driver.executeScript(() => {
         const els = Array.from(document.querySelectorAll('button, a, span, div'));
@@ -333,10 +322,7 @@ async function postToRakutenRoom(item) {
           el.textContent.includes('お気に入り') ||
           el.textContent.includes('ブックマーク')
         );
-        if (btn) {
-          btn.click();
-          return btn.textContent.trim();
-        }
+        if (btn) { btn.click(); return btn.textContent.trim(); }
         return null;
       });
       if (clicked) {
@@ -357,47 +343,12 @@ async function postToRakutenRoom(item) {
     console.log('お気に入りボタン後URL:', afterBookmarkUrl);
     await screenshot(driver, 'debug2.png');
 
-    // ログインページにリダイレクトされた場合は再ログイン
-    if (afterBookmarkUrl.includes('login') || afterBookmarkUrl.includes('sign_in')) {
-      console.log('ログインページにリダイレクト。再ログイン中...');
-      try {
-        const emailSelectors = [
-          By.name('email'),
-          By.name('username'),
-          By.css('input[type="text"]'),
-        ];
-        let emailInput = null;
-        for (const sel of emailSelectors) {
-          try { emailInput = await driver.findElement(sel); break; } catch (e) {}
-        }
-        if (emailInput) {
-          await emailInput.clear();
-          await emailInput.sendKeys(CONFIG.EMAIL);
-          const btnClicked = await clickButton(driver);
-          if (!btnClicked) await emailInput.sendKeys(Key.RETURN);
-          await sleep(3000);
-        }
-
-        const passInput = await driver.findElement(By.css('input[type="password"]'));
-        await passInput.clear();
-        await passInput.sendKeys(CONFIG.PASS);
-        const loginClicked = await clickButton(driver);
-        if (!loginClicked) await passInput.sendKeys(Key.RETURN);
-        await sleep(5000);
-
-        console.log('再ログイン後URL:', await driver.getCurrentUrl());
-        await screenshot(driver, 'debug2b.png');
-      } catch (e) {
-        console.log('再ログイン失敗:', e.message);
-        await driver.quit();
-        return false;
-      }
-    }
-
-    // ⑥ ROOM関連要素を探す
-    console.log('ROOM関連要素を検索中...');
+    // ログインが必要な場合は自動ログイン
+    await handleLoginIfNeeded(driver, 'debug_relogin');
     await sleep(2000);
 
+    // ⑦ ROOM関連要素を探す
+    console.log('ROOM関連要素を検索中...');
     const roomElements = await driver.executeScript(() => {
       const elements = Array.from(document.querySelectorAll('a, button, [onclick]'));
       return elements
@@ -417,7 +368,7 @@ async function postToRakutenRoom(item) {
     });
     console.log('ROOM関連要素:', JSON.stringify(roomElements, null, 2));
 
-    // ⑦ 「ROOMに追加」をクリック
+    // ⑧ 「ROOMに追加」をクリック
     console.log('ROOMに追加リンクをクリック中...');
     const roomClicked = await driver.executeScript(() => {
       const links = Array.from(document.querySelectorAll('a, button, [onclick]'));
@@ -443,10 +394,15 @@ async function postToRakutenRoom(item) {
 
     console.log('ROOMリンククリック成功:', roomClicked);
     await sleep(3000);
+
+    // ROOMのログインが必要な場合は自動ログイン
+    await handleLoginIfNeeded(driver, 'debug_room_relogin');
+    await sleep(3000);
+
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑧ 投稿フォームに紹介文を入力
+    // ⑨ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
@@ -463,15 +419,17 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑨ 「完了」ボタンをクリック
+    // ⑩ 「完了」ボタンをクリック
     console.log('「完了」ボタンをクリック中...');
-    const submitClicked = await clickButton(driver);
-    if (!submitClicked) {
-      console.log('完了ボタンが見つかりません');
+    try {
+      const submitBtn = await driver.findElement(By.css('button[type="submit"]'));
+      await driver.executeScript('arguments[0].click();', submitBtn);
+    } catch (e) {
+      console.log('完了ボタンエラー:', e.message);
     }
     await sleep(5000);
 
-    // ⑩ 投稿完了確認
+    // ⑪ 投稿完了確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
