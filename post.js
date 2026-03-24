@@ -62,9 +62,9 @@ async function getUnpostedItems() {
 }
 
 // ============================================================
-// 投稿済みに更新
+// スプレッドシートのステータスを更新
 // ============================================================
-async function markAsPosted(rowIndex) {
+async function updateStatus(rowIndex, status) {
   try {
     const b64 = process.env.GSA;
     const json = Buffer.from(b64, 'base64').toString('utf8');
@@ -79,13 +79,13 @@ async function markAsPosted(rowIndex) {
       spreadsheetId: CONFIG.SHEET,
       range: `楽天ROOM投稿リスト!H${rowIndex}`,
       valueInputOption: 'RAW',
-      requestBody: { values: [['済']] },
+      requestBody: { values: [[status]] },
     });
 
-    console.log(`行${rowIndex}を「済」に更新しました`);
+    console.log(`行${rowIndex}を「${status}」に更新しました`);
 
   } catch (e) {
-    console.error('markAsPostedエラー:', e.message);
+    console.error('updateStatusエラー:', e.message);
   }
 }
 
@@ -222,6 +222,7 @@ async function clickOkPopup(driver) {
 
 // ============================================================
 // 楽天ROOMに投稿
+// 戻り値: 'success' | 'skip' | 'fail'
 // ============================================================
 async function postToRakutenRoom(item) {
   const driver = await createDriver();
@@ -236,7 +237,7 @@ async function postToRakutenRoom(item) {
     if (!loggedIn) {
       console.log('ログイン失敗');
       await driver.quit();
-      return false;
+      return 'fail';
     }
 
     // ② 楽天ROOMのセッション確立
@@ -286,7 +287,7 @@ async function postToRakutenRoom(item) {
       console.log('お気に入りボタンが見つかりません');
       await screenshot(driver, 'debug_no_bookmark.png');
       await driver.quit();
-      return false;
+      return 'fail';
     }
 
     // ⑥ お気に入りページへのリダイレクトを待つ
@@ -316,7 +317,7 @@ async function postToRakutenRoom(item) {
     if (!roomLink) {
       console.log('ROOMリンクが見つかりません');
       await driver.quit();
-      return false;
+      return 'fail';
     }
 
     console.log('ROOMリンク発見:', roomLink);
@@ -331,7 +332,6 @@ async function postToRakutenRoom(item) {
       : item.itemCode;
     console.log('itemCode:', itemCodeFromUrl);
 
-    // nameは商品名の先頭50文字
     const itemName = item.itemName.substring(0, 50);
 
     // ⑧ ROOMの投稿フォームにアクセス
@@ -367,20 +367,16 @@ async function postToRakutenRoom(item) {
       XMLHttpRequest.prototype.send = function(body) {
         const xhr = this;
         if (body && typeof body === 'string' && xhr.__url && xhr.__url.includes('/api/collect')) {
-          // item_keyを注入
           body = body.replace(/item_key=([^&]*)/, function(match, val) {
             return 'item_key=' + (val || encodeURIComponent(window.__injectItemKey));
           });
-          // nameが空なら商品名を注入
           body = body.replace(/name=([^&]*)/, function(match, val) {
             return 'name=' + (val || encodeURIComponent(window.__injectName));
           });
-
           xhr.addEventListener('load', function() {
             window.__apiCollectResult = {
               status: xhr.status,
               response: xhr.responseText || '',
-              url: xhr.__url
             };
           });
         }
@@ -422,7 +418,7 @@ async function postToRakutenRoom(item) {
       console.log('投稿フォームエラー:', e.message);
       await screenshot(driver, 'debug_no_form.png');
       await driver.quit();
-      return false;
+      return 'fail';
     }
 
     await screenshot(driver, 'debug4.png');
@@ -445,32 +441,39 @@ async function postToRakutenRoom(item) {
       await sleep(1000);
       apiResult = await driver.executeScript(`return window.__apiCollectResult;`);
       if (apiResult) {
-        console.log(`APIレスポンス（${i + 1}秒後）: status=${apiResult.status} response=${apiResult.response.substring(0, 100)}`);
+        console.log(`APIレスポンス（${i + 1}秒後）: status=${apiResult.status}`);
         break;
       }
     }
 
     await screenshot(driver, 'debug_final.png');
+    await driver.quit();
 
-    if (apiResult && apiResult.status === 200) {
-      console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
-      await driver.quit();
-      return true;
-    } else if (apiResult) {
-      console.log(`❌ API失敗 status=${apiResult.status}: ${apiResult.response}`);
-      await driver.quit();
-      return false;
-    } else {
+    if (!apiResult) {
       console.log('❌ APIレスポンスが取得できませんでした');
-      await driver.quit();
-      return false;
+      return 'fail';
     }
+
+    if (apiResult.status === 200) {
+      console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
+      return 'success';
+    }
+
+    // 商品がROOMに存在しない場合はスキップ
+    const resJson = JSON.parse(apiResult.response || '{}');
+    if (resJson.msg_code === 'R119' || (resJson.message && resJson.message.includes('存在しません'))) {
+      console.log(`⏭️ スキップ（ROOMに存在しない商品）: ${item.itemName.substring(0, 40)}`);
+      return 'skip';
+    }
+
+    console.log(`❌ API失敗 status=${apiResult.status}: ${apiResult.response}`);
+    return 'fail';
 
   } catch (e) {
     console.error(`エラー: ${e.message}`);
     await screenshot(driver, 'debug_error.png');
-    await driver.quit();
-    return false;
+    try { await driver.quit(); } catch (_) {}
+    return 'fail';
   }
 }
 
@@ -498,11 +501,14 @@ async function main() {
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
 
-    const success = await postToRakutenRoom(item);
+    const result = await postToRakutenRoom(item);
 
-    if (success) {
-      await markAsPosted(item.rowIndex);
+    if (result === 'success') {
+      await updateStatus(item.rowIndex, '済');
+    } else if (result === 'skip') {
+      await updateStatus(item.rowIndex, 'スキップ');
     }
+    // failの場合は何もしない（次回また試みる）
 
     await sleep(5000);
   }
