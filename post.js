@@ -2,20 +2,22 @@ const puppeteer = require('puppeteer');
 const { google } = require('googleapis');
 
 // ============================================================
-// 設定
+// 設定（コマンドライン引数から取得）
+// node post.js <email> <pass> <sheetId> <gsa_base64>
 // ============================================================
-const CONFIG = {
-  EMAIL: process.env.EM,jyumaru.shidou@gmail.com
-  PASS:  process.env.PW,e4KwbXGJH7aR
-  SHEET: process.env.SID,1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq
+const args = process.argv.slice(2);
+const CFG = {
+  A: args[0], // jyumaru.shidou@gmail.com
+  B: args[1], // e4KwbXGJH7aR
+  C: args[2], // 1iDIrzBRZQt6SUYtSI1Cro8YyWq8SPcq
+  D: args[3], // ewogICJ0eXBlIjogInNlcnZpY2VfYWNjb3VudCIsCiAgInByb2plY3RfaWQiOiAicmFrdXRlbnJvb21ib3QtNDkxMTE3IiwKICAicHJpdmF0ZV9rZXlfaWQiOiAiYjdlODljNTlkZmQwMDk2MDViZTIxYjVhZWNmNDY4NGZhM2VkNDUyYSIsCiAgInByaXZhdGVfa2V5IjogIi0tLS0tQkVHSU4gUFJJVkFURSBLRVktLS0tLVxuTUlJRXZnSUJBREFOQmdrcWhraUc5dzBCQVFFRkFBU0NCS2d3Z2dTa0FnRUFBb0lCQVFEQURrY3hJZ3c5TXIxclxucXFPTmlKQytWbnI4UUw1YzZncGhaUUc5bUhEMDlEV29RdHRFVC9qVjYzd3lwK29RMlhrU0IwMUlKZ3l4NlhMN1xuNFJCNS9WUzVXenQwYjhmQm5xZXVyWU9sNENsWGJlZ1Yvb1VlNDFvTWdIMk9odEk2Y25uQ2NXTEd4cFVGYWc5N1xucGUzSnhuT3hwTkF2cHNyTm9UUDhFSVB0enl1ODBBMnVGazB6U29DOWQ0WnpHMUJydHRlR3Y5NGVqcE5PWEpiL1xuMk9XMVFLZ0hFQ0dJRXFqcGVkT3JKRjNkSmkzb3I5K0JSSUdPQ3VWRjBDaXc4WGVocGJFS0lvemUzR0E1U3VsNVxuU0x6U2NrSlR3M09kZXNKWGdzRFpkSWc3RFhndldUc0RWRUpyTTFEcEhyUDU2WFNNU3kzVytvOEFSSmN6SlhWWVxuMkp0Vm1iVFpBZ01CQUFFQ2dnRUFDK0cyUU5GbzdXNVNyck1IWEUyN0dyTng5Mkl3Qk1LTDh0dVRZSDNxV3hVeVxucnA2NFB3RXRsVnAwdkJPTVZRK0hRSGpJTExNQjdRM1N5Y2R5UkFIS3VJN3UzalMrS0huZXlOMCtQRWhpZG1DN1xuejRTSUN0R285QVlNL29EVHg3N21Ub1BDUnlibytFVklBTy9TaHIycTBhNHZIUXVXRjJPbU9pMXhaQWlCbmJRclxuNDF2MlAyUC9iaDJWdDlvZXQ0akFjcHhNbHhqWHVCV0RVcGd4QWkvM0kycjBEcENtelBYQmx4OFNMYTMva1NVOFxuUjFTdnJCOWhYazU3amhnYTJNQ3dnaTBlbytBeVJBVGsyRTNoL1BDVjFVemV6Z25aQXpERW5CdmlpK0pzZTVqUVxueW1LWVlxY3dIbFBwQlJpeDFqY3djU3MxL2RYY1MrWXdQM1Y4alQvSTZ3S0JnUUR4ZE5mQVQ3NW5tb3lESGovY1xuWlIwektsaGdjblBzNTB0Umt1SGxrK2g4cWVuQ0hmU1hBMUU1S0hVQWVTTmFzU3RMWW93Y3R5WFE2L1hrZ2M5QVxuRWFXOTBuZmppQnVPNEhUTHNwWXlZUzV1L1VQZXlqUE5pSmhmUUpMbytBTHRKMXZxc0kxZ3NzdmtDVE5OcTNuc1xuLzVhdlJ0aUdhMEhnODZ5dmQvbTl2ak1YNndLQmdRRExuN0t3YWcwS2N3S0M4TnFvM1M2M1Q4Sy9KNXdSQk1hZFxuUnh5WC9TckFXWE5QWURrU0ZOaktzWjZFNW5wbGFHYUhaS1pWODFZQlpiTmhpZ3QxZXVDVnJ6YXZkclpUMy9JQVxuUndPNFV4eHcwTW1DNWoyei9qQ0NzSzl5b3Z2ZkdiYUNlYVdHNE04TlQ4MGlQY2pvY1hWb2FQSHhSOVRsVFYwTFxubTE3WllMTlpTd0tCZ1FDVnFMTjF5cmVjNWNsRUdBTERLNVV1dW9kdXVHSXNLNnlla2lrY01GSkF1dHhkNmsxSlxuTU5BdVdtb3k4ZUs4K3VWMzQwd3ZIRUgvUGRINllZOUJDZTh1T2Y3L2M4U0pDWXk3R1NWSmNyemlKRzdsNzNTdVxuWjRUeVBVY1J5VytlNk85ckJ5V0tFeWlYWGpDRGFzNjIzRERjMFUreCtWY3JCRDQ3d0dSMmZDYVZJd0tCZ1FDVFxuWUxEcWNyZWhtb0IwMlhMSnlkem9ITGl0dGpPRk5kbXpPQ2IvOHVNZ2VSMjJrOFI2eTgvbFZRMlF6MmhEUVg4RFxuKzl0UVZtRW5mYjZKbUdxV3l5c0Y2OTArdmtOVkRiK1FaOVhQY1lnaU4xdkNmSGFvY2hBV1oxOTFMM1h4a2lEQVxuNnQ3ZGNwVXA0MXByc0NCYjdOSzNrVTJiL3d1ZU01Sm10anUrUmZsSlpRS0JnQ2QxaFBubjNsNkVYRTFUVVF0RlxueUhnVEwvOUJ3cE1TNXY0Q2VMQktnWjFGK05MS3hzUFZRWkMxTlVCTkNURlRiVnZMNDBIYjZsT3lUR1BCU2Q5dFxuTlc2NDc1NVI5WW1WbXRTWUhoczZqUGxnVW1XNzVvQzVpcU8rc3MrSVlCTzdMc3RwcHB6dWRlUG11NTg5SmRCQlxuVEc2ZVRZNW80dUxIVHAxaFVkTFo4ckNmXG4tLS0tLUVORCBQUklWQVRFIEtFWS0tLS0tXG4iLAogICJjbGllbnRfZW1haWwiOiAicmFrdXRlbi1yb29tLWJvdEByYWt1dGVucm9vbWJvdC00OTExMTcuaWFtLmdzZXJ2aWNlYWNjb3VudC5jb20iLAogICJjbGllbnRfaWQiOiAiMTAyNTY3MTU5ODUwOTYwNzY2OTEyIiwKICAiYXV0aF91cmkiOiAiaHR0cHM6Ly9hY2NvdW50cy5nb29nbGUuY29tL28vb2F1dGgyL2F1dGgiLAogICJ0b2tlbl91cmkiOiAiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLAogICJhdXRoX3Byb3ZpZGVyX3g1MDlfY2VydF91cmwiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vb2F1dGgyL3YxL2NlcnRzIiwKICAiY2xpZW50X3g1MDlfY2VydF91cmwiOiAiaHR0cHM6Ly93d3cuZ29vZ2xlYXBpcy5jb20vcm9ib3QvdjEvbWV0YWRhdGEveDUwOS9yYWt1dGVuLXJvb20tYm90JTQwcmFrdXRlbnJvb21ib3QtNDkxMTE3LmlhbS5nc2VydmljZWFjY291bnQuY29tIiwKICAidW5pdmVyc2VfZG9tYWluIjogImdvb2dsZWFwaXMuY29tIgp9Cg==
 };
 
 // ============================================================
 // Googleスプレッドシートから未投稿の商品を取得
 // ============================================================
 async function getUnpostedItems() {
-  const b64 = process.env.GSA;
-  const json = Buffer.from(b64, 'base64').toString('utf8');
+  const json = Buffer.from(CFG.D, 'base64').toString('utf8');
   const credentials = JSON.parse(json);
   const auth = new google.auth.GoogleAuth({
     credentials,
@@ -24,7 +26,7 @@ async function getUnpostedItems() {
 
   const sheets = google.sheets({ version: 'v4', auth });
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: CONFIG.SHEET,
+    spreadsheetId: CFG.C,
     range: '楽天ROOM投稿リスト!A:H',
   });
 
@@ -56,8 +58,7 @@ async function getUnpostedItems() {
 // 投稿済みに更新
 // ============================================================
 async function markAsPosted(rowIndex) {
-  const b64 = process.env.GSA;
-  const json = Buffer.from(b64, 'base64').toString('utf8');
+  const json = Buffer.from(CFG.D, 'base64').toString('utf8');
   const credentials = JSON.parse(json);
   const auth = new google.auth.GoogleAuth({
     credentials,
@@ -66,7 +67,7 @@ async function markAsPosted(rowIndex) {
 
   const sheets = google.sheets({ version: 'v4', auth });
   await sheets.spreadsheets.values.update({
-    spreadsheetId: CONFIG.SHEET,
+    spreadsheetId: CFG.C,
     range: `楽天ROOM投稿リスト!H${rowIndex}`,
     valueInputOption: 'RAW',
     requestBody: { values: [['済']] },
@@ -108,7 +109,7 @@ async function postToRakutenRoom(item) {
         await page.$('input[name="username"]') ||
         await page.$('input[type="email"]') ||
         await page.$('#email');
-      await emailInput.type(CONFIG.EMAIL);
+      await emailInput.type(CFG.A);
 
       const nextBtn = await page.$('button[type="submit"]');
       if (nextBtn) {
@@ -123,7 +124,7 @@ async function postToRakutenRoom(item) {
 
       const passInput = await page.$('input[type="password"]');
       if (passInput) {
-        await passInput.type(CONFIG.PASS);
+        await passInput.type(CFG.B);
         await Promise.all([
           page.waitForNavigation({ waitUntil: 'networkidle2' }),
           page.click('button[type="submit"]'),
@@ -205,7 +206,7 @@ async function postToRakutenRoom(item) {
           await page.$('input[name="username"]') ||
           await page.$('input[type="email"]') ||
           await page.$('#email');
-        if (emailInput) await emailInput.type(CONFIG.EMAIL);
+        if (emailInput) await emailInput.type(CFG.A);
 
         const nextBtn = await page.$('button[type="submit"]');
         if (nextBtn) {
@@ -218,7 +219,7 @@ async function postToRakutenRoom(item) {
 
         const passInput = await page.$('input[type="password"]');
         if (passInput) {
-          await passInput.type(CONFIG.PASS);
+          await passInput.type(CFG.B);
           await Promise.all([
             page.waitForNavigation({ waitUntil: 'networkidle2' }),
             page.click('button[type="submit"]'),
@@ -357,6 +358,11 @@ async function postToRakutenRoom(item) {
 async function main() {
   console.log('=== 楽天ROOM自動投稿開始 ===');
 
+  if (!CFG.A || !CFG.B || !CFG.C || !CFG.D) {
+    console.error('引数が不足しています');
+    process.exit(1);
+  }
+
   const items = await getUnpostedItems();
 
   if (items.length === 0) {
@@ -364,7 +370,6 @@ async function main() {
     return;
   }
 
-  // 1回の実行で最大3件投稿（負荷軽減）
   const targetItems = items.slice(0, 3);
 
   for (const item of targetItems) {
@@ -376,7 +381,6 @@ async function main() {
       await markAsPosted(item.rowIndex);
     }
 
-    // 投稿間隔を空ける（連続投稿対策）
     await new Promise(r => setTimeout(r, 5000));
   }
 
