@@ -126,7 +126,7 @@ async function screenshot(driver, filename) {
 }
 
 // ============================================================
-// ログイン処理（リダイレクト先URLを指定して待機）
+// ログイン処理
 // ============================================================
 async function performLogin(driver, screenshotPrefix, successUrlContains) {
   console.log('ログイン処理開始...');
@@ -173,7 +173,12 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
     const passInput = await driver.findElement(By.css('input[type="password"]'));
     console.log('パスワードを入力中...');
     await passInput.clear();
-    await passInput.sendKeys(CONFIG.PASS);
+
+    // パスワードを1文字ずつ入力（特殊文字対策）
+    for (const char of CONFIG.PASS) {
+      await passInput.sendKeys(char);
+      await sleep(50);
+    }
     await sleep(1000);
 
     // ログインボタン or Enterキー
@@ -483,6 +488,9 @@ async function main() {
 
   console.log('EM:', process.env.EM ? '設定済み' : '未設定');
   console.log('PW:', process.env.PW ? '設定済み' : '未設定');
+  console.log('PW文字数:', process.env.PW ? process.env.PW.length : 0);
+  console.log('PW先頭1文字:', process.env.PW ? process.env.PW.charAt(0) : 'なし');
+  console.log('PW末尾1文字:', process.env.PW ? process.env.PW.charAt(process.env.PW.length - 1) : 'なし');
   console.log('SID:', process.env.SID ? '設定済み' : '未設定');
   console.log('GSA:', process.env.GSA ? '設定済み' : '未設定');
 
