@@ -211,20 +211,20 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
 }
 
 // ============================================================
-// OKボタン（<a>タグ）をクリック
+// OKポップアップを閉じる
 // ============================================================
 async function clickOkPopup(driver) {
   try {
     const okLink = await driver.findElement(By.css('li.ok a'));
     await driver.executeScript('arguments[0].click();', okLink);
-    console.log('OKリンクをクリック');
     await sleep(800);
     return true;
   } catch (e) {
     try {
-      const okBtn = await driver.findElement(By.xpath('//*[contains(@ng-click,"ok()") and not(contains(@ng-click,"book"))]'));
+      const okBtn = await driver.findElement(
+        By.xpath('//*[contains(@ng-click,"ok()") and not(contains(@ng-click,"book"))]')
+      );
       await driver.executeScript('arguments[0].click();', okBtn);
-      console.log('OKボタン(ng-click)をクリック');
       await sleep(800);
       return true;
     } catch (e2) {
@@ -359,45 +359,8 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ 投稿フォームに紹介文を入力（AngularJS対応）
-    console.log('紹介文を入力中...');
-    try {
-      await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
-
-      await driver.executeScript(`
-        const el = document.querySelector('#collect-content');
-        // AngularJSのネイティブvalueセッターを使う
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-          window.HTMLTextAreaElement.prototype, 'value'
-        ).set;
-        nativeInputValueSetter.call(el, arguments[0]);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new Event('keyup', { bubbles: true }));
-        // AngularJSのスコープを強制更新
-        try {
-          const scope = angular.element(el).scope();
-          if (scope) scope.$apply();
-        } catch(e) {}
-      `, item.postText);
-
-      const charCount = await driver.executeScript(() => {
-        const el = document.querySelector('#collect-content');
-        return el ? el.value.length : 0;
-      });
-      console.log(`紹介文入力完了（${charCount}文字）`);
-
-    } catch (e) {
-      console.log('投稿フォームが見つかりません:', await driver.getCurrentUrl());
-      await screenshot(driver, 'debug_no_form.png');
-      await driver.quit();
-      return false;
-    }
-
-    await screenshot(driver, 'debug4.png');
-
-    // ⑩ 最初のOKポップアップを閉じる
-    console.log('OKポップアップを閉じます（1回目）...');
+    // ⑨ 最初のOKポップアップを閉じる
+    console.log('OKポップアップを閉じます...');
     for (let i = 0; i < 10; i++) {
       const clicked = await clickOkPopup(driver);
       if (!clicked) {
@@ -406,62 +369,87 @@ async function postToRakutenRoom(item) {
       }
       console.log(`OKクリック ${i + 1}回目`);
     }
+    await sleep(1000);
 
-    await sleep(1500);
-    await screenshot(driver, 'debug4b.png');
-
-    // ⑪ 「完了」ボタンをクリック
-    console.log('完了ボタンをクリック中...');
-    let submitSuccess = false;
-
+    // ⑩ 紹介文をAngularJSのスコープに直接セット
+    console.log('紹介文を入力中...');
     try {
-      const collectBtns = await driver.findElements(By.css('button.collect-btn'));
-      console.log(`collect-btnボタン数: ${collectBtns.length}`);
+      await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
 
-      for (const btn of collectBtns) {
-        const isDisplayed = await btn.isDisplayed();
-        const isEnabled = await btn.isEnabled();
-        if (isDisplayed && isEnabled) {
-          await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', btn);
-          await sleep(500);
-          await driver.executeScript('arguments[0].click();', btn);
-          console.log('✅ collect-btnをクリックしました');
-          submitSuccess = true;
-          break;
-        }
-      }
+      const inputResult = await driver.executeScript(`
+        const el = document.querySelector('#collect-content');
+        if (!el) return 'element not found';
+
+        // AngularJSのスコープを取得
+        const scope = angular.element(el).scope();
+        if (!scope) return 'scope not found';
+
+        // スコープのモデルに直接セット
+        scope.$apply(function() {
+          scope.collectContent = arguments[0];
+        }.bind(null, arguments[0]));
+
+        // DOMにも反映
+        el.value = arguments[0];
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+
+        return 'ok: ' + el.value.length + '文字';
+      `, item.postText);
+
+      console.log('紹介文入力結果:', inputResult);
+
+      // AngularJSのバインディングを確認
+      const scopeCheck = await driver.executeScript(`
+        const el = document.querySelector('#collect-content');
+        const scope = angular.element(el).scope();
+        return {
+          domValue: el.value.length,
+          scopeValue: scope ? (scope.collectContent || '').length : 'no scope',
+          isDisabled: scope ? scope.isCollectDisabled : 'no scope'
+        };
+      `);
+      console.log('スコープ確認:', JSON.stringify(scopeCheck));
+
     } catch (e) {
-      console.log('collect-btnエラー:', e.message);
-    }
-
-    if (!submitSuccess) {
-      try {
-        const btn = await driver.findElement(By.css('button[ng-click="collect()"]'));
-        const isDisplayed = await btn.isDisplayed();
-        if (isDisplayed) {
-          await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', btn);
-          await sleep(500);
-          await driver.executeScript('arguments[0].click();', btn);
-          console.log('✅ ng-click="collect()"ボタンをクリック');
-          submitSuccess = true;
-        }
-      } catch (e) {
-        console.log('ng-click collect()ボタンが見つかりません');
-      }
-    }
-
-    if (!submitSuccess) {
-      console.log('完了ボタンが見つかりませんでした');
+      console.log('投稿フォームが見つかりません:', e.message);
+      await screenshot(driver, 'debug_no_form.png');
       await driver.quit();
       return false;
     }
 
-    // ⑫ 投稿後のポップアップ（成功確認）を閉じる
-    console.log('投稿後ポップアップを処理中...');
-    await sleep(3000);
-    await screenshot(driver, 'debug_after_submit.png');
+    await screenshot(driver, 'debug4.png');
 
-    // 投稿後のOKポップアップを閉じる（最大10回試みる）
+    // ⑪ AngularJSのcollect()を直接呼び出す
+    console.log('AngularJS collect()を直接呼び出します...');
+    const collectResult = await driver.executeScript(`
+      try {
+        const el = document.querySelector('#collect-content');
+        const scope = angular.element(el).scope();
+        if (!scope) return 'scope not found';
+
+        // isCollectDisabledをfalseに強制設定
+        scope.$apply(function() {
+          scope.isCollectDisabled = false;
+          scope.isSubmitted = false;
+        });
+
+        // collect()関数を直接呼び出す
+        scope.$apply(function() {
+          scope.collect();
+        });
+
+        return 'collect() called';
+      } catch(e) {
+        return 'error: ' + e.message;
+      }
+    `);
+    console.log('collect()呼び出し結果:', collectResult);
+
+    await sleep(3000);
+    await screenshot(driver, 'debug4b.png');
+
+    // ⑫ 投稿後のポップアップを閉じる
+    console.log('投稿後ポップアップを処理中...');
     for (let i = 0; i < 10; i++) {
       const clicked = await clickOkPopup(driver);
       if (clicked) {
@@ -473,34 +461,47 @@ async function postToRakutenRoom(item) {
       }
     }
 
-    // ⑬ 投稿完了を待つ（URLが変わるまで最大15秒）
-    console.log('投稿完了を待機中...');
-    for (let i = 0; i < 15; i++) {
-      await sleep(1000);
-      const url = await driver.getCurrentUrl();
-      if (url.includes('room.rakuten.co.jp') && !url.includes('collect') && !url.includes('login')) {
-        console.log(`✅ 投稿成功（URL変化検知）: ${url}`);
-        await screenshot(driver, 'debug_final.png');
-        await driver.quit();
-        return true;
-      }
-    }
-
-    // ⑭ 最終確認
-    const finalUrl = await driver.getCurrentUrl();
-    console.log('投稿後URL:', finalUrl);
+    await sleep(3000);
     await screenshot(driver, 'debug_final.png');
 
-    // collectページのままでも投稿後ポップアップが出ていれば成功とみなす
-    if (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('login') && !finalUrl.includes('sign_in')) {
-      console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
+    // ⑬ 投稿完了確認（ROOMのアイテムページに遷移したか）
+    const finalUrl = await driver.getCurrentUrl();
+    console.log('投稿後URL:', finalUrl);
+
+    // collectページ以外のroomページに移動していれば成功
+    if (
+      finalUrl.includes('room.rakuten.co.jp') &&
+      !finalUrl.includes('login') &&
+      !finalUrl.includes('sign_in') &&
+      !finalUrl.includes('/mix/collect')
+    ) {
+      console.log(`✅ 投稿成功（URLが変化）: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
-    } else {
-      console.log(`❌ 投稿失敗: ${finalUrl}`);
-      await driver.quit();
-      return false;
     }
+
+    // collectページのままでもisSubmittedがtrueなら成功
+    const isSubmitted = await driver.executeScript(`
+      try {
+        const el = document.querySelector('#collect-content');
+        if (!el) return false;
+        const scope = angular.element(el).scope();
+        return scope ? scope.isSubmitted : false;
+      } catch(e) {
+        return false;
+      }
+    `);
+    console.log('isSubmitted:', isSubmitted);
+
+    if (isSubmitted) {
+      console.log(`✅ 投稿成功（isSubmitted=true）: ${item.itemName.substring(0, 40)}`);
+      await driver.quit();
+      return true;
+    }
+
+    console.log(`❌ 投稿失敗: ${finalUrl}`);
+    await driver.quit();
+    return false;
 
   } catch (e) {
     console.error(`エラー: ${e.message}`);
