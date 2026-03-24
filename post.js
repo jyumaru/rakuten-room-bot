@@ -365,32 +365,42 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ XHR傍受を設定（collect()のHTTPリクエストを記録）
+    // ⑨ XHRを傍受してitem_keyを注入
     await driver.executeScript(`
       window.__xhrLog = [];
-      const origOpen = XMLHttpRequest.prototype.open;
+      window.__injectItemKey = arguments[0];
       const origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function(body) {
+        if (body && typeof body === 'string' && body.includes('item_key=') && body.includes('/api/collect')) {
+          // item_keyが空の場合だけ注入
+          body = body.replace(/item_key=([^&]*)/, 'item_key=' + encodeURIComponent(window.__injectItemKey));
+          console.log('item_key注入後body:', body.substring(0, 200));
+        }
+        if (body && typeof body === 'string' && this.__url && this.__url.includes('/api/collect')) {
+          body = body.replace(/item_key=([^&]*)/, function(match, val) {
+            if (!val) return 'item_key=' + encodeURIComponent(window.__injectItemKey);
+            return match;
+          });
+        }
+        window.__xhrLog.push({url: this.__url, body: body ? body.substring(0, 300) : ''});
+        const xhr = this;
+        xhr.addEventListener('load', function() {
+          window.__xhrLog.push({
+            url: xhr.__url,
+            status: xhr.status,
+            response: xhr.responseText ? xhr.responseText.substring(0, 300) : ''
+          });
+        });
+        return origSend.call(this, body);
+      };
+
+      const origOpen = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function(method, url) {
         this.__url = url;
         this.__method = method;
         return origOpen.apply(this, arguments);
       };
-      XMLHttpRequest.prototype.send = function(body) {
-        const xhr = this;
-        xhr.addEventListener('load', function() {
-          window.__xhrLog.push({
-            method: xhr.__method,
-            url: xhr.__url,
-            status: xhr.status,
-            response: xhr.responseText ? xhr.responseText.substring(0, 200) : ''
-          });
-        });
-        xhr.__body = body;
-        window.__xhrLog.push({method: xhr.__method, url: xhr.__url, body: body ? body.substring(0, 200) : ''});
-        return origSend.apply(this, arguments);
-      };
-      console.log('XHR傍受設定完了');
-    `);
+    `, itemCodeFromUrl);
 
     // ⑩ 最初のOKポップアップを閉じる
     console.log('OKポップアップを閉じます...');
@@ -405,7 +415,7 @@ async function postToRakutenRoom(item) {
     await sleep(1000);
 
     // ⑪ 紹介文とitemCodeをAngularJSのスコープに直接セット
-    console.log('紹介文とitemCodeを入力中...');
+    console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
 
@@ -428,7 +438,6 @@ async function postToRakutenRoom(item) {
         return {
           collectContent: (scope.collectContent || '').length + '文字',
           isCollectDisabled: scope.isCollectDisabled,
-          isSubmitted: scope.isSubmitted,
           itemCode: scope.itemCode || 'なし',
         };
       `);
@@ -479,6 +488,10 @@ async function postToRakutenRoom(item) {
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
 
+    // POSTのレスポンスを確認
+    const postResponse = (xhrLog || []).find(x => x.status && x.url && x.url.includes('/api/collect'));
+    console.log('POSTレスポンス:', JSON.stringify(postResponse));
+
     const finalScope = await driver.executeScript(`
       try {
         const el = document.querySelector('#collect-content');
@@ -491,7 +504,8 @@ async function postToRakutenRoom(item) {
 
     if (
       (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('/mix/collect') && !finalUrl.includes('login')) ||
-      finalScope.isSubmitted === true
+      finalScope.isSubmitted === true ||
+      (postResponse && postResponse.status === 200)
     ) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
