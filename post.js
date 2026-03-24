@@ -357,6 +357,11 @@ async function postToRakutenRoom(item) {
 // ============================================================
 async function main() {
   console.log('=== 楽天ROOM自動投稿開始 ===');
+   // 環境変数チェック
+  console.log('EM:', process.env.EM ? '設定済み' : '未設定');
+  console.log('PW:', process.env.PW ? '設定済み' : '未設定');
+  console.log('SID:', process.env.SID ? '設定済み' : '未設定');
+  console.log('GSA:', process.env.GSA ? '設定済み' : '未設定')
 
   if (!CFG.A || !CFG.B || !CFG.C || !CFG.D) {
     console.error('引数が不足しています');
