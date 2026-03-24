@@ -206,6 +206,23 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
 }
 
 // ============================================================
+// iframeを調査してページ内の全フレームをログ出力
+// ============================================================
+async function inspectIframes(driver) {
+  const iframes = await driver.findElements(By.css('iframe'));
+  console.log(`iframe数: ${iframes.length}`);
+  for (let i = 0; i < iframes.length; i++) {
+    try {
+      const src = await iframes[i].getAttribute('src');
+      const id = await iframes[i].getAttribute('id');
+      const name = await iframes[i].getAttribute('name');
+      console.log(`iframe[${i}]: id=${id}, name=${name}, src=${src}`);
+    } catch (e) {}
+  }
+  return iframes;
+}
+
+// ============================================================
 // 楽天ROOMに投稿
 // ============================================================
 async function postToRakutenRoom(item) {
@@ -335,7 +352,33 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ 投稿フォームに紹介文を入力
+    // ⑨ iframeを調査
+    console.log('iframeを調査中...');
+    const iframes = await inspectIframes(driver);
+
+    // ⑩ iframeがある場合は切り替えて処理
+    let inIframe = false;
+    for (let i = 0; i < iframes.length; i++) {
+      try {
+        await driver.switchTo().frame(iframes[i]);
+        console.log(`iframe[${i}]に切り替え`);
+
+        // このiframe内にcollect-contentがあるか確認
+        const textarea = await driver.findElements(By.id('collect-content'));
+        if (textarea.length > 0) {
+          console.log(`iframe[${i}]内にフォーム発見！`);
+          inIframe = true;
+          break;
+        }
+
+        // なければデフォルトに戻る
+        await driver.switchTo().defaultContent();
+      } catch (e) {
+        await driver.switchTo().defaultContent();
+      }
+    }
+
+    // ⑪ 投稿フォームに紹介文を入力
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
@@ -363,8 +406,8 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑩ OKポップアップをSeleniumで直接閉じる（最大10回試みる）
-    console.log('OKポップアップをSeleniumで閉じます...');
+    // ⑫ OKポップアップを閉じる（メインコンテキストとiframe両方試す）
+    console.log('OKポップアップを閉じます...');
     for (let i = 0; i < 10; i++) {
       try {
         const okBtn = await driver.findElement(
@@ -382,26 +425,25 @@ async function postToRakutenRoom(item) {
     await sleep(1500);
     await screenshot(driver, 'debug4b.png');
 
-    // ⑪ 「完了」ボタンをSeleniumで直接クリック
+    // ⑬ 「完了」ボタンをクリック
     console.log('完了ボタンをクリック中...');
     let submitSuccess = false;
 
-    // まずXPathで「完了」テキストのボタンを探す
+    // collect-btnクラスで探す
     try {
       const completeBtn = await driver.findElement(
         By.xpath('//button[normalize-space(text())="完了" and contains(@class,"collect-btn")]')
       );
-      await completeBtn.scrollIntoView();
       await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', completeBtn);
       await sleep(500);
       await driver.executeScript('arguments[0].click();', completeBtn);
       console.log('完了ボタンクリック成功（collect-btn）');
       submitSuccess = true;
     } catch (e) {
-      console.log('collect-btnで見つからず、別の方法で試します...');
+      console.log('collect-btnで見つからず...');
     }
 
-    // 次に「完了」テキストのボタンを探す
+    // テキストで探す
     if (!submitSuccess) {
       try {
         const completeBtn = await driver.findElement(
@@ -417,9 +459,30 @@ async function postToRakutenRoom(item) {
       }
     }
 
+    // iframeに戻って試す
+    if (!submitSuccess && inIframe) {
+      for (let i = 0; i < iframes.length; i++) {
+        try {
+          await driver.switchTo().frame(iframes[i]);
+          const completeBtn = await driver.findElement(
+            By.xpath('//button[normalize-space(text())="完了"]')
+          );
+          await driver.executeScript('arguments[0].click();', completeBtn);
+          console.log(`iframe[${i}]内の完了ボタンクリック成功`);
+          submitSuccess = true;
+          break;
+        } catch (e) {
+          await driver.switchTo().defaultContent();
+        }
+      }
+    }
+
+    // デフォルトコンテキストに戻す
+    try { await driver.switchTo().defaultContent(); } catch (e) {}
+
     await sleep(6000);
 
-    // ⑫ 投稿完了確認
+    // ⑭ 投稿完了確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
@@ -442,6 +505,7 @@ async function postToRakutenRoom(item) {
   } catch (e) {
     console.error(`エラー: ${e.message}`);
     await screenshot(driver, 'debug_error.png');
+    try { await driver.switchTo().defaultContent(); } catch (_) {}
     await driver.quit();
     return false;
   }
