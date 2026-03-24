@@ -126,9 +126,9 @@ async function screenshot(driver, filename) {
 }
 
 // ============================================================
-// ログイン処理（共通）
+// ログイン処理（リダイレクト先URLを指定して待機）
 // ============================================================
-async function performLogin(driver, screenshotPrefix) {
+async function performLogin(driver, screenshotPrefix, successUrlContains) {
   console.log('ログイン処理開始...');
   await screenshot(driver, `${screenshotPrefix}_1.png`);
 
@@ -183,32 +183,29 @@ async function performLogin(driver, screenshotPrefix) {
     } catch (e) {
       await passInput.sendKeys(Key.RETURN);
     }
-    await sleep(5000);
 
-    await screenshot(driver, `${screenshotPrefix}_3.png`);
-    console.log('ログイン後URL:', await driver.getCurrentUrl());
-    return true;
+    // リダイレクト先URLが来るまで最大15秒待つ
+    console.log(`リダイレクト待機中... (目標URL: ${successUrlContains})`);
+    for (let i = 0; i < 15; i++) {
+      await sleep(1000);
+      const url = await driver.getCurrentUrl();
+      if (url.includes(successUrlContains) && !url.includes('sign_in') && !url.includes('login')) {
+        console.log(`✅ ログイン成功: ${url}`);
+        await screenshot(driver, `${screenshotPrefix}_3.png`);
+        return true;
+      }
+    }
+
+    const finalUrl = await driver.getCurrentUrl();
+    console.log('❌ ログイン失敗（タイムアウト）:', finalUrl);
+    await screenshot(driver, `${screenshotPrefix}_failed.png`);
+    return false;
 
   } catch (e) {
     console.log('ログインエラー:', e.message);
     await screenshot(driver, `${screenshotPrefix}_error.png`);
     return false;
   }
-}
-
-// ============================================================
-// ログインが必要なURLかチェックして自動ログイン
-// ============================================================
-async function handleLoginIfNeeded(driver, screenshotPrefix) {
-  const url = await driver.getCurrentUrl();
-  if (url.includes('login') || url.includes('sign_in')) {
-    console.log('ログインページを検出。自動ログイン中...');
-    await performLogin(driver, screenshotPrefix);
-    await sleep(3000);
-    console.log('ログイン後URL:', await driver.getCurrentUrl());
-    return true;
-  }
-  return false;
 }
 
 // ============================================================
@@ -219,21 +216,17 @@ async function postToRakutenRoom(item) {
 
   try {
     // ① 楽天ブックマーク認証URLでログイン
-    console.log('楽天にログイン中...');
-    const loginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
-    await driver.get(loginUrl);
+    console.log('楽天ブックマークにログイン中...');
+    const bookmarkLoginUrl = 'https://login.account.rakuten.com/sso/authorize?client_id=rakuten_ichiba_bookmark_web&redirect_uri=https://my.bookmark.rakuten.co.jp&response_type=code&scope=openid&state=login#/sign_in';
+    await driver.get(bookmarkLoginUrl);
     await sleep(3000);
 
-    console.log('ログインページURL:', await driver.getCurrentUrl());
-    await performLogin(driver, 'debug_login');
-
-    const loginedUrl = await driver.getCurrentUrl();
-    if (!loginedUrl.includes('my.bookmark.rakuten.co.jp')) {
-      console.log('ブックマークログイン失敗:', loginedUrl);
+    const bookmarkLoggedIn = await performLogin(driver, 'debug_login', 'my.bookmark.rakuten.co.jp');
+    if (!bookmarkLoggedIn) {
+      console.log('ブックマークログイン失敗');
       await driver.quit();
       return false;
     }
-    console.log('✅ ブックマークログイン成功');
 
     // ② 楽天ROOMにもログイン
     console.log('楽天ROOMにログイン中...');
@@ -241,11 +234,10 @@ async function postToRakutenRoom(item) {
     await driver.get(roomLoginUrl);
     await sleep(3000);
 
-    await performLogin(driver, 'debug_room_login');
-
-    const roomLoginedUrl = await driver.getCurrentUrl();
-    console.log('ROOMログイン後URL:', roomLoginedUrl);
-    await screenshot(driver, 'debug_room_logined.png');
+    const roomLoggedIn = await performLogin(driver, 'debug_room_login', 'room.rakuten.co.jp');
+    if (!roomLoggedIn) {
+      console.log('ROOMログイン失敗。続行します...');
+    }
 
     // ③ 楽天トップページでセッション確立
     await driver.get('https://www.rakuten.co.jp/?l-id=pc_header_logo');
@@ -338,17 +330,29 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    await sleep(5000);
-    const afterBookmarkUrl = await driver.getCurrentUrl();
-    console.log('お気に入りボタン後URL:', afterBookmarkUrl);
-    await screenshot(driver, 'debug2.png');
+    // my.bookmark.rakuten.co.jpへのリダイレクトを待つ
+    console.log('お気に入りページへのリダイレクト待機中...');
+    for (let i = 0; i < 15; i++) {
+      await sleep(1000);
+      const url = await driver.getCurrentUrl();
+      if (url.includes('my.bookmark.rakuten.co.jp')) {
+        console.log('✅ お気に入りページに到達:', url);
+        break;
+      }
+      if (url.includes('login') || url.includes('sign_in')) {
+        console.log('ログインページにリダイレクト。再ログイン中...');
+        await performLogin(driver, 'debug_relogin', 'my.bookmark.rakuten.co.jp');
+        break;
+      }
+    }
 
-    // ログインが必要な場合は自動ログイン
-    await handleLoginIfNeeded(driver, 'debug_relogin');
-    await sleep(2000);
+    await screenshot(driver, 'debug2.png');
+    console.log('お気に入りページURL:', await driver.getCurrentUrl());
 
     // ⑦ ROOM関連要素を探す
     console.log('ROOM関連要素を検索中...');
+    await sleep(2000);
+
     const roomElements = await driver.executeScript(() => {
       const elements = Array.from(document.querySelectorAll('a, button, [onclick]'));
       return elements
@@ -370,34 +374,49 @@ async function postToRakutenRoom(item) {
 
     // ⑧ 「ROOMに追加」をクリック
     console.log('ROOMに追加リンクをクリック中...');
-    const roomClicked = await driver.executeScript(() => {
+    const roomLink = await driver.executeScript(() => {
       const links = Array.from(document.querySelectorAll('a, button, [onclick]'));
-      const roomLink = links.find(a =>
-        (a.href && a.href.includes('room.rakuten.co.jp/mix/collect')) ||
+      const link = links.find(a =>
+        (a.href && a.href.includes('room.rakuten.co.jp')) ||
         a.textContent.includes('ROOMに追加') ||
         a.textContent.includes('ROOMに投稿') ||
         a.textContent.includes('コレ！')
       );
-      if (roomLink) {
-        roomLink.click();
-        return roomLink.href || roomLink.textContent;
-      }
+      if (link) return link.href || link.textContent;
       return null;
     });
 
-    if (!roomClicked) {
+    if (!roomLink) {
       console.log('ROOMに追加リンクが見つかりません');
       await screenshot(driver, 'debug3.png');
       await driver.quit();
       return false;
     }
 
-    console.log('ROOMリンククリック成功:', roomClicked);
+    console.log('ROOMリンク発見:', roomLink);
+
+    // /mix?itemcode= を /mix/collect?itemcode= に変換
+    let collectUrl = roomLink;
+    if (roomLink.includes('room.rakuten.co.jp/mix?')) {
+      collectUrl = roomLink.replace('/mix?', '/mix/collect?');
+      console.log('URLを変換:', collectUrl);
+    }
+
+    // ROOMの投稿フォームに直接アクセス
+    await driver.get(collectUrl);
     await sleep(3000);
 
-    // ROOMのログインが必要な場合は自動ログイン
-    await handleLoginIfNeeded(driver, 'debug_room_relogin');
-    await sleep(3000);
+    // ログインが必要な場合は自動ログイン
+    const currentUrl = await driver.getCurrentUrl();
+    if (currentUrl.includes('login') || currentUrl.includes('sign_in')) {
+      console.log('ROOMログインページ検出。ログイン中...');
+      await performLogin(driver, 'debug_room_relogin2', 'room.rakuten.co.jp');
+      await sleep(3000);
+
+      // ログイン後に再度投稿フォームへ
+      await driver.get(collectUrl);
+      await sleep(3000);
+    }
 
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
@@ -435,9 +454,9 @@ async function postToRakutenRoom(item) {
     await screenshot(driver, 'debug_final.png');
 
     if (
-      finalUrl.includes('complete') ||
-      finalUrl.includes('room.rakuten.co.jp') ||
-      finalUrl.includes('collect')
+      finalUrl.includes('room.rakuten.co.jp') &&
+      !finalUrl.includes('login') &&
+      !finalUrl.includes('sign_in')
     ) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
