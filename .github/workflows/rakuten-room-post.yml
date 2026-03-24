@@ -64,4 +64,5 @@ jobs:
             debug_error.png
             debug_no_bookmark.png
             debug_no_form.png
+            debug_after_submit.png
           if-no-files-found: ignore
