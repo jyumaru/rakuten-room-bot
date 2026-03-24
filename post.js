@@ -346,10 +346,9 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ XHRを傍受してcollect_complete（投稿完了）を検出
+    // ⑨ XHRを傍受して /api/collect のレスポンスを取得
     await driver.executeScript(`
-      window.__xhrLog = [];
-      window.__collectComplete = false;
+      window.__apiCollectResult = null;
       window.__injectItemKey = arguments[0];
 
       const origOpen = XMLHttpRequest.prototype.open;
@@ -363,27 +362,26 @@ async function postToRakutenRoom(item) {
 
       XMLHttpRequest.prototype.send = function(body) {
         const xhr = this;
-        // collect APIのitem_keyを注入
+
+        // /api/collect のbodyにitem_keyを注入
         if (body && typeof body === 'string' && xhr.__url && xhr.__url.includes('/api/collect')) {
           body = body.replace(/item_key=([^&]*)/, function(match, val) {
-            return val ? match : 'item_key=' + encodeURIComponent(window.__injectItemKey);
+            const newVal = val || encodeURIComponent(window.__injectItemKey);
+            console.log('item_key注入:', newVal);
+            return 'item_key=' + newVal;
+          });
+
+          // /api/collect のレスポンスを記録
+          xhr.addEventListener('load', function() {
+            window.__apiCollectResult = {
+              status: xhr.status,
+              response: xhr.responseText || '',
+              url: xhr.__url
+            };
+            console.log('/api/collect レスポンス:', xhr.status, xhr.responseText ? xhr.responseText.substring(0, 100) : '');
           });
         }
-        xhr.addEventListener('load', function() {
-          window.__xhrLog.push({
-            url: xhr.__url,
-            status: xhr.status,
-            response: xhr.responseText ? xhr.responseText.substring(0, 200) : ''
-          });
-          // collect_completeが来たら成功フラグを立てる
-          if (xhr.__url && xhr.__url.includes('collect_complete')) {
-            window.__collectComplete = true;
-          }
-          // /api/collect が200なら成功
-          if (xhr.__url && xhr.__url.includes('/api/collect') && xhr.status === 200) {
-            window.__collectComplete = true;
-          }
-        });
+
         return origSend.call(this, body);
       };
     `, itemCodeFromUrl);
@@ -437,36 +435,30 @@ async function postToRakutenRoom(item) {
       } catch(e) { console.error(e); }
     `);
 
-    // ⑬ collect_completeを最大15秒待つ
-    console.log('投稿完了を待機中...');
-    let postSuccess = false;
+    // ⑬ /api/collect のレスポンスを最大15秒待つ
+    console.log('APIレスポンスを待機中...');
+    let apiResult = null;
     for (let i = 0; i < 15; i++) {
       await sleep(1000);
-      const complete = await driver.executeScript(`return window.__collectComplete || false;`);
-      if (complete) {
-        console.log(`✅ collect_complete検出（${i + 1}秒後）`);
-        postSuccess = true;
+      apiResult = await driver.executeScript(`return window.__apiCollectResult;`);
+      if (apiResult) {
+        console.log(`APIレスポンス取得（${i + 1}秒後）:`, JSON.stringify(apiResult));
         break;
       }
     }
 
     await screenshot(driver, 'debug_final.png');
-    console.log('投稿後URL:', await driver.getCurrentUrl());
 
-    if (postSuccess) {
+    if (apiResult && apiResult.status === 200) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
+    } else if (apiResult) {
+      console.log(`❌ API失敗 status=${apiResult.status}: ${apiResult.response}`);
+      await driver.quit();
+      return false;
     } else {
-      // XHRログを確認
-      const xhrLog = await driver.executeScript(`return window.__xhrLog || [];`);
-      const hasCollectComplete = xhrLog.some(x => x.url && x.url.includes('collect_complete'));
-      if (hasCollectComplete) {
-        console.log(`✅ 投稿成功（XHRログ確認）: ${item.itemName.substring(0, 40)}`);
-        await driver.quit();
-        return true;
-      }
-      console.log(`❌ 投稿失敗`);
+      console.log('❌ APIレスポンスが取得できませんでした');
       await driver.quit();
       return false;
     }
@@ -498,7 +490,7 @@ async function main() {
     return;
   }
 
-  const targetItems = items.slice(0, 3);
+  const targetItems = items.slice(0, 1);
 
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
