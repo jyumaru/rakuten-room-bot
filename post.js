@@ -343,7 +343,6 @@ async function postToRakutenRoom(item) {
       : roomLink;
     console.log('投稿フォームURL:', collectUrl);
 
-    // URLからitemcodeを抽出
     const itemCodeMatch = collectUrl.match(/itemcode=([^&]+)/);
     const itemCodeFromUrl = itemCodeMatch
       ? decodeURIComponent(itemCodeMatch[1])
@@ -366,7 +365,34 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ 最初のOKポップアップを閉じる
+    // ⑨ XHR傍受を設定（collect()のHTTPリクエストを記録）
+    await driver.executeScript(`
+      window.__xhrLog = [];
+      const origOpen = XMLHttpRequest.prototype.open;
+      const origSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this.__url = url;
+        this.__method = method;
+        return origOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function(body) {
+        const xhr = this;
+        xhr.addEventListener('load', function() {
+          window.__xhrLog.push({
+            method: xhr.__method,
+            url: xhr.__url,
+            status: xhr.status,
+            response: xhr.responseText ? xhr.responseText.substring(0, 200) : ''
+          });
+        });
+        xhr.__body = body;
+        window.__xhrLog.push({method: xhr.__method, url: xhr.__url, body: body ? body.substring(0, 200) : ''});
+        return origSend.apply(this, arguments);
+      };
+      console.log('XHR傍受設定完了');
+    `);
+
+    // ⑩ 最初のOKポップアップを閉じる
     console.log('OKポップアップを閉じます...');
     for (let i = 0; i < 10; i++) {
       const clicked = await clickOkPopup(driver);
@@ -378,46 +404,32 @@ async function postToRakutenRoom(item) {
     }
     await sleep(1000);
 
-    // ⑩ 紹介文とitemCodeをAngularJSのスコープに直接セット
+    // ⑪ 紹介文とitemCodeをAngularJSのスコープに直接セット
     console.log('紹介文とitemCodeを入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
 
-      const inputResult = await driver.executeScript(`
+      await driver.executeScript(`
         const el = document.querySelector('#collect-content');
-        if (!el) return 'element not found';
         const scope = angular.element(el).scope();
-        if (!scope) return 'scope not found';
-
         scope.$apply(function() {
           scope.collectContent = arguments[0];
-          // itemCodeをスコープにセット
-          if (!scope.itemCode || scope.itemCode === '') {
-            scope.itemCode = arguments[1];
-          }
+          scope.itemCode = arguments[1];
           scope.isCollectDisabled = false;
           scope.isSubmitted = false;
         }.bind(null, arguments[0], arguments[1]));
-
         el.value = arguments[0];
         el.dispatchEvent(new Event('input', { bubbles: true }));
-
-        return 'ok';
       `, item.postText, itemCodeFromUrl);
 
-      console.log('入力結果:', inputResult);
-
-      // スコープ確認
       const scopeVars = await driver.executeScript(`
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
-        if (!scope) return {};
         return {
           collectContent: (scope.collectContent || '').length + '文字',
           isCollectDisabled: scope.isCollectDisabled,
           isSubmitted: scope.isSubmitted,
           itemCode: scope.itemCode || 'なし',
-          hasCollectFn: typeof scope.collect === 'function'
         };
       `);
       console.log('スコープ変数:', JSON.stringify(scopeVars));
@@ -431,47 +443,32 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑪ collect()を呼び出す
+    // ⑫ collect()を呼び出す
     console.log('collect()を呼び出します...');
-    const collectResult = await driver.executeScript(`
+    await driver.executeScript(`
       try {
         const el = document.querySelector('#collect-content');
         const scope = angular.element(el).scope();
-        if (!scope) return 'scope not found';
         scope.isCollectDisabled = false;
-        const result = scope.collect();
-        return 'called';
-      } catch(e) {
-        return 'error: ' + e.message;
-      }
+        scope.collect();
+      } catch(e) { console.error(e); }
     `);
-    console.log('collect()結果:', collectResult);
 
-    await sleep(3000);
+    await sleep(5000);
 
-    const afterCollect = await driver.executeScript(`
-      try {
-        const el = document.querySelector('#collect-content');
-        const scope = angular.element(el).scope();
-        return {
-          isSubmitted: scope ? scope.isSubmitted : false,
-          isCollectDisabled: scope ? scope.isCollectDisabled : false
-        };
-      } catch(e) { return {error: e.message}; }
-    `);
-    console.log('collect()後:', JSON.stringify(afterCollect));
+    // XHRログを確認
+    const xhrLog = await driver.executeScript(`return window.__xhrLog || [];`);
+    console.log('XHRログ:', JSON.stringify(xhrLog, null, 2));
 
     await screenshot(driver, 'debug4b.png');
 
-    // ⑫ 投稿後のポップアップを閉じる
-    console.log('投稿後ポップアップを処理中...');
+    // ⑬ 投稿後のポップアップを閉じる
     for (let i = 0; i < 10; i++) {
       const clicked = await clickOkPopup(driver);
       if (clicked) {
         console.log(`投稿後OKポップアップをクリック（${i + 1}回目）`);
         await sleep(1000);
       } else {
-        console.log(`投稿後OKポップアップなし（${i}回後）`);
         break;
       }
     }
