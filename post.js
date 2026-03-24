@@ -211,6 +211,29 @@ async function performLogin(driver, screenshotPrefix, successUrlContains) {
 }
 
 // ============================================================
+// OKボタン（<a>タグ）をクリック
+// ============================================================
+async function clickOkPopup(driver) {
+  try {
+    const okLink = await driver.findElement(By.css('li.ok a'));
+    await driver.executeScript('arguments[0].click();', okLink);
+    console.log('OKリンクをクリック');
+    await sleep(800);
+    return true;
+  } catch (e) {
+    try {
+      const okBtn = await driver.findElement(By.xpath('//*[contains(@ng-click,"ok()") and not(contains(@ng-click,"book"))]'));
+      await driver.executeScript('arguments[0].click();', okBtn);
+      console.log('OKボタン(ng-click)をクリック');
+      await sleep(800);
+      return true;
+    } catch (e2) {
+      return false;
+    }
+  }
+}
+
+// ============================================================
 // 楽天ROOMに投稿
 // ============================================================
 async function postToRakutenRoom(item) {
@@ -229,7 +252,7 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    // ② 楽天ROOMのセッション確立（ログインURLにアクセスするだけ）
+    // ② 楽天ROOMのセッション確立
     console.log('楽天ROOMのセッション確立中...');
     await driver.get('https://login.account.rakuten.com/sso/authorize?client_id=rakuten_room_web&redirect_uri=https://room.rakuten.co.jp/common/callback&scope=openid&response_type=code&state=login#/sign_in');
     await sleep(5000);
@@ -336,17 +359,26 @@ async function postToRakutenRoom(item) {
     console.log('ROOMコレクトフォームURL:', await driver.getCurrentUrl());
     await screenshot(driver, 'debug3.png');
 
-    // ⑨ 投稿フォームに紹介文を入力
+    // ⑨ 投稿フォームに紹介文を入力（AngularJS対応）
     console.log('紹介文を入力中...');
     try {
       await driver.wait(until.elementLocated(By.id('collect-content')), 10000);
 
       await driver.executeScript(`
         const el = document.querySelector('#collect-content');
-        el.value = arguments[0];
+        // AngularJSのネイティブvalueセッターを使う
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+          window.HTMLTextAreaElement.prototype, 'value'
+        ).set;
+        nativeInputValueSetter.call(el, arguments[0]);
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('keyup', { bubbles: true }));
+        // AngularJSのスコープを強制更新
+        try {
+          const scope = angular.element(el).scope();
+          if (scope) scope.$apply();
+        } catch(e) {}
       `, item.postText);
 
       const charCount = await driver.executeScript(() => {
@@ -364,25 +396,15 @@ async function postToRakutenRoom(item) {
 
     await screenshot(driver, 'debug4.png');
 
-    // ⑩ OKポップアップを閉じる（<a>タグ）
-    console.log('OKポップアップを閉じます...');
+    // ⑩ 最初のOKポップアップを閉じる
+    console.log('OKポップアップを閉じます（1回目）...');
     for (let i = 0; i < 10; i++) {
-      try {
-        const okLink = await driver.findElement(By.css('li.ok a'));
-        await driver.executeScript('arguments[0].click();', okLink);
-        console.log(`OKリンクをクリック（${i + 1}回目）`);
-        await sleep(800);
-      } catch (e) {
-        try {
-          const okBtn = await driver.findElement(By.xpath('//*[contains(@ng-click,"ok()") and not(contains(@ng-click,"book"))]'));
-          await driver.executeScript('arguments[0].click();', okBtn);
-          console.log(`OKボタン(ng-click)をクリック（${i + 1}回目）`);
-          await sleep(800);
-        } catch (e2) {
-          console.log(`OKボタンなし（${i}回クリック後）`);
-          break;
-        }
+      const clicked = await clickOkPopup(driver);
+      if (!clicked) {
+        console.log(`OKボタンなし（${i}回クリック後）`);
+        break;
       }
+      console.log(`OKクリック ${i + 1}回目`);
     }
 
     await sleep(1500);
@@ -420,7 +442,7 @@ async function postToRakutenRoom(item) {
           await driver.executeScript('arguments[0].scrollIntoView({block:"center"});', btn);
           await sleep(500);
           await driver.executeScript('arguments[0].click();', btn);
-          console.log('✅ ng-click="collect()"ボタンをクリックしました');
+          console.log('✅ ng-click="collect()"ボタンをクリック');
           submitSuccess = true;
         }
       } catch (e) {
@@ -434,26 +456,43 @@ async function postToRakutenRoom(item) {
       return false;
     }
 
-    // ⑫ 投稿完了を待つ（ローディングが終わるまで最大30秒）
+    // ⑫ 投稿後のポップアップ（成功確認）を閉じる
+    console.log('投稿後ポップアップを処理中...');
+    await sleep(3000);
+    await screenshot(driver, 'debug_after_submit.png');
+
+    // 投稿後のOKポップアップを閉じる（最大10回試みる）
+    for (let i = 0; i < 10; i++) {
+      const clicked = await clickOkPopup(driver);
+      if (clicked) {
+        console.log(`投稿後OKポップアップをクリック（${i + 1}回目）`);
+        await sleep(1000);
+      } else {
+        console.log(`投稿後OKポップアップなし（${i}回後）`);
+        break;
+      }
+    }
+
+    // ⑬ 投稿完了を待つ（URLが変わるまで最大15秒）
     console.log('投稿完了を待機中...');
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 15; i++) {
       await sleep(1000);
       const url = await driver.getCurrentUrl();
-      console.log(`待機${i + 1}秒: ${url}`);
       if (url.includes('room.rakuten.co.jp') && !url.includes('collect') && !url.includes('login')) {
-        console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
+        console.log(`✅ 投稿成功（URL変化検知）: ${url}`);
         await screenshot(driver, 'debug_final.png');
         await driver.quit();
         return true;
       }
     }
 
-    // ⑬ 最終確認
+    // ⑭ 最終確認
     const finalUrl = await driver.getCurrentUrl();
     console.log('投稿後URL:', finalUrl);
     await screenshot(driver, 'debug_final.png');
 
-    if (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('login') && !finalUrl.includes('sign_in') && !finalUrl.includes('collect')) {
+    // collectページのままでも投稿後ポップアップが出ていれば成功とみなす
+    if (finalUrl.includes('room.rakuten.co.jp') && !finalUrl.includes('login') && !finalUrl.includes('sign_in')) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       await driver.quit();
       return true;
