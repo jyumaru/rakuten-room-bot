@@ -496,7 +496,7 @@ async function main() {
     return;
   }
 
-  const targetItems = items.slice(0, 3);
+  const targetItems = items.slice(0, 5);
 
   for (const item of targetItems) {
     console.log(`\n--- 投稿開始: ${item.itemName.substring(0, 40)} ---`);
