@@ -51,37 +51,11 @@ function extractBannedFromApiMessage(message) {
 }
 
 // ============================================================
-// アフィリエイトURLを展開して素のitem.rakuten.co.jpのURLを取り出す
+// itemCode (shop:itemId) から ROOM 投稿URLを組み立てる
 // ============================================================
-function unwrapAffiliateUrl(url) {
-  if (!url) return url;
-  try {
-    // hb.afl.rakuten.co.jp のリダイレクタ → pc パラメータに元URL
-    if (url.includes('hb.afl.rakuten.co.jp')) {
-      const u = new URL(url);
-      const pc = u.searchParams.get('pc');
-      if (pc) {
-        const decoded = decodeURIComponent(pc);
-        if (/^https?:\/\//.test(decoded)) return decoded;
-      }
-    }
-    return url;
-  } catch (e) {
-    return url;
-  }
-}
-
-// item.rakuten.co.jp/{shop}/{itemId}/ から shopCode:itemId を取り出す
-function parseShopAndItem(url) {
-  try {
-    const u = new URL(url);
-    if (!u.hostname.includes('item.rakuten.co.jp')) return null;
-    const parts = u.pathname.split('/').filter(Boolean);
-    if (parts.length < 2) return null;
-    return { shop: parts[0], item: parts[1] };
-  } catch (e) {
-    return null;
-  }
+function buildRoomUrl(itemCode) {
+  if (!itemCode || !itemCode.includes(':')) return null;
+  return `https://room.rakuten.co.jp/mix?itemcode=${encodeURIComponent(itemCode)}&scid=we_room_upc60`;
 }
 
 // ============================================================
@@ -114,9 +88,6 @@ async function getUnpostedItems() {
       const status = (row[COL.STATUS] || '').toString().trim();
       if (status === '済' || status === 'スキップ') continue;
 
-      const itemUrl = row[COL.ITEM_URL] || '';
-      if (!itemUrl) continue;
-
       items.push({
         rowIndex:  i + 1,
         createdAt: row[COL.CREATED_AT] || '',
@@ -124,7 +95,7 @@ async function getUnpostedItems() {
         itemCode:  row[COL.ITEM_CODE]  || '',
         itemName:  row[COL.ITEM_NAME]  || '',
         price:     row[COL.PRICE]      || '',
-        itemUrl:   itemUrl,
+        itemUrl:   row[COL.ITEM_URL]   || '',
         postText:  row[COL.POST_TEXT]  || '',
         status:    status,
       });
@@ -178,17 +149,6 @@ async function screenshot(driver, filename) {
   } catch (e) {}
 }
 
-async function waitForPageReady(driver, timeoutMs = 15000) {
-  try {
-    await driver.wait(async () => {
-      const state = await driver.executeScript('return document.readyState');
-      return state === 'complete';
-    }, timeoutMs);
-  } catch (e) {}
-  // アフィリエイトリダイレクタの場合、読込完了しても最終ページじゃないことがあるので追加で待機
-  await sleep(1500);
-}
-
 // ============================================================
 // ログイン処理
 // ============================================================
@@ -237,7 +197,7 @@ async function performLogin(driver) {
   await sleep(5000);
 
   const url = await driver.getCurrentUrl();
-  if (url.includes('my.bookmark.rakuten.co.jp') || url.includes('rakuten.co.jp')) {
+  if (url.includes('rakuten.co.jp')) {
     console.log(`✅ ログイン成功: ${url}`);
     return true;
   }
@@ -246,150 +206,21 @@ async function performLogin(driver) {
 }
 
 // ============================================================
-// ブックマーク（お気に入り）ボタンクリック＋検証（強化版）
-// ============================================================
-async function clickBookmarkWithVerify(driver) {
-  // 画面下部までスクロールしてDOMを全部ロードさせる（遅延読み込み対策）
-  try {
-    await driver.executeScript(`
-      window.scrollTo(0, document.body.scrollHeight / 2);
-    `);
-    await sleep(800);
-    await driver.executeScript(`window.scrollTo(0, 0);`);
-    await sleep(500);
-  } catch (e) {}
-
-  const cssSelectors = [
-    '[data-ratid="item_bookmark"]',
-    '[data-ratid*="bookmark"]',
-    '.floatingBookmarkAreaWrapper button',
-    '.itemBookmarkAreaWrapper button',
-    'button[class*="Bookmark"]',
-    'a[href*="my.bookmark.rakuten.co.jp/bookmark/register"]',
-    '[aria-label*="お気に入り"]',
-    '[aria-label*="ブックマーク"]',
-    'button:has(svg[class*="bookmark"])',
-  ];
-  const xpathSelectors = [
-    "//button[contains(., 'お気に入り')]",
-    "//a[contains(., 'お気に入り')]",
-    "//button[contains(., 'ブックマーク')]",
-  ];
-
-  const tryClick = async (el) => {
-    const displayed = await el.isDisplayed().catch(() => false);
-    if (!displayed) return false;
-
-    await driver.executeScript('arguments[0].scrollIntoView({block: "center"});', el);
-    await sleep(400);
-    await driver.executeScript('arguments[0].click();', el);
-
-    return await driver.wait(async () => {
-      const url = await driver.getCurrentUrl();
-      if (url.includes('room.rakuten.co.jp')) return true;
-      const handles = await driver.getAllWindowHandles();
-      if (handles.length > 1) return true;
-      try {
-        const popups = await driver.findElements(
-          By.css('[class*="roomPopup"], [class*="RoomModal"], [class*="bookmark-popup"]')
-        );
-        if (popups.length > 0) return true;
-      } catch (e) {}
-      return false;
-    }, 6000).then(() => true).catch(() => false);
-  };
-
-  // CSS セレクタで探す
-  for (const sel of cssSelectors) {
-    let els = [];
-    try { els = await driver.findElements(By.css(sel)); } catch (e) { continue; }
-    for (const el of els) {
-      try {
-        if (await tryClick(el)) {
-          console.log(`✅ ブックマーク成功 (css): ${sel}`);
-          return true;
-        }
-      } catch (e) {}
-    }
-  }
-  // XPath セレクタで探す
-  for (const xp of xpathSelectors) {
-    let els = [];
-    try { els = await driver.findElements(By.xpath(xp)); } catch (e) { continue; }
-    for (const el of els) {
-      try {
-        if (await tryClick(el)) {
-          console.log(`✅ ブックマーク成功 (xpath): ${xp}`);
-          return true;
-        }
-      } catch (e) {}
-    }
-  }
-  return false;
-}
-
-// ============================================================
-// フォールバック: itemCode から直接ブックマーク登録URLを踏む
-// ============================================================
-async function bookmarkViaDirectUrl(driver, item) {
-  // itemCode (C列) は "shop:itemId" 形式
-  let shop = '', itemId = '';
-  if (item.itemCode && item.itemCode.includes(':')) {
-    [shop, itemId] = item.itemCode.split(':');
-  } else {
-    // itemCodeが無ければURLから推測
-    const parsed = parseShopAndItem(item.resolvedUrl || item.itemUrl);
-    if (parsed) { shop = parsed.shop; itemId = parsed.item; }
-  }
-  if (!shop || !itemId) return null;
-
-  const bookmarkUrl =
-    `https://my.bookmark.rakuten.co.jp/bookmark/register?shopCode=${encodeURIComponent(shop)}&itemCode=${encodeURIComponent(itemId)}`;
-  console.log(`直接ブックマーク登録を試行: ${bookmarkUrl}`);
-  try {
-    await driver.get(bookmarkUrl);
-    await waitForPageReady(driver);
-
-    // ROOMへ遷移する or ROOMリンクが出てくるのを待つ
-    for (let i = 0; i < 3; i++) {
-      const currentUrl = await driver.getCurrentUrl();
-      if (currentUrl.includes('room.rakuten.co.jp')) return currentUrl;
-      try {
-        const link = await driver.findElement(By.css('a[href*="room.rakuten.co.jp/mix"]'));
-        const href = await link.getAttribute('href');
-        if (href) return href;
-      } catch (e) {}
-      await sleep(1500);
-    }
-  } catch (e) {
-    console.log(`直接ブックマーク失敗: ${e.message}`);
-  }
-  return null;
-}
-
-async function findRoomLink(driver) {
-  const handles = await driver.getAllWindowHandles();
-  if (handles.length > 1) {
-    await driver.switchTo().window(handles[handles.length - 1]);
-    await sleep(1500);
-  }
-  const currentUrl = await driver.getCurrentUrl();
-  if (currentUrl.includes('room.rakuten.co.jp')) return currentUrl;
-
-  try {
-    const link = await driver.findElement(By.css('a[href*="room.rakuten.co.jp/mix"]'));
-    return await link.getAttribute('href');
-  } catch (e) {}
-  return null;
-}
-
-// ============================================================
-// ROOM投稿
+// ROOM投稿: itemCodeから組み立てたURLに直接アクセスして collect() を呼ぶ
 // ============================================================
 async function postToRoom(driver, roomUrl, postText) {
+  console.log(`ROOM投稿ページへ: ${roomUrl}`);
   await driver.get(roomUrl);
-  await sleep(4000);
+  await sleep(4500);
 
+  // ログインが必要と判定された場合（ログインセッション切れ等）の検出
+  const currentUrl = await driver.getCurrentUrl();
+  if (currentUrl.includes('login.account.rakuten.com') || currentUrl.includes('login.rakuten.co.jp')) {
+    console.log('⚠️ ROOMページでログインを要求されました');
+    return { status: 'login_required' };
+  }
+
+  // OKポップアップを閉じる
   for (let i = 0; i < 3; i++) {
     try {
       const okBtn = await driver.findElement(By.xpath('//button[normalize-space(text())="OK"]'));
@@ -397,6 +228,15 @@ async function postToRoom(driver, roomUrl, postText) {
       console.log(`OKクリック ${i + 1}回目`);
       await sleep(800);
     } catch (e) { break; }
+  }
+
+  // textareaが出現するのを待つ
+  try {
+    await driver.wait(until.elementLocated(By.id('collect-content')), 8000);
+  } catch (e) {
+    console.log('⚠️ 投稿フォーム(#collect-content)が表示されません');
+    await screenshot(driver, `no_form_${Date.now()}.png`);
+    return { status: 'form_not_found' };
   }
 
   const itemCodeMatch = roomUrl.match(/itemcode=([^&]+)/);
@@ -451,7 +291,7 @@ async function postToRoom(driver, roomUrl, postText) {
     }, 300);
   `, postText, itemCode);
 
-  return apiResultRaw;
+  return { status: 'posted', raw: apiResultRaw };
 }
 
 function parseApiResult(raw) {
@@ -468,63 +308,37 @@ function parseApiResult(raw) {
 }
 
 // ============================================================
-// 1商品を投稿するメインフロー
+// 1商品を投稿するメインフロー（ブックマーク処理をスキップ）
 // ============================================================
 async function postItem(driver, item) {
-  // アフィリエイトURLを展開
-  item.resolvedUrl = unwrapAffiliateUrl(item.itemUrl);
-  if (item.resolvedUrl !== item.itemUrl) {
-    console.log(`アフィリエイトURL展開: ${item.resolvedUrl}`);
+  // itemCode から ROOM URL を組み立てる（これが本命）
+  const roomUrl = buildRoomUrl(item.itemCode);
+  if (!roomUrl) {
+    console.log(`❌ itemCodeが不正: "${item.itemCode}" (行${item.rowIndex})`);
+    return { status: 'invalid_item_code' };
   }
 
-  if (!/^https?:\/\//.test(item.resolvedUrl)) {
-    console.log(`❌ 無効なURL: "${item.resolvedUrl}"`);
-    return { status: 'invalid_url' };
-  }
-
+  // 紹介文サニタイズ
   let { cleaned, hits } = sanitizeContent(item.postText);
   if (hits.length) console.log(`⚠️ 事前サニタイズ: ${hits.join(', ')} を除去`);
   if (!cleaned) { console.log('❌ 紹介文が空'); return { status: 'empty_post_text' }; }
 
+  // 楽天にログイン
   console.log('楽天にログイン中...');
   await driver.get('https://my.bookmark.rakuten.co.jp/');
   await sleep(2000);
   const loggedIn = await performLogin(driver);
   if (!loggedIn) return { status: 'login_failed' };
 
-  console.log(`商品ページを開く: ${item.itemName.substring(0, 40)}`);
-  await driver.get(item.resolvedUrl);
-  await waitForPageReady(driver);
-
-  // ログが長くなるので現在URLも出しておく
-  const landedUrl = await driver.getCurrentUrl();
-  console.log(`現在URL: ${landedUrl.substring(0, 80)}...`);
-
-  console.log('お気に入りボタンをクリック中...');
-  let bookmarked = await clickBookmarkWithVerify(driver);
-
-  let roomUrl = null;
-  if (bookmarked) {
-    roomUrl = await findRoomLink(driver);
-  }
-
-  // フォールバック: 直接ブックマーク登録URLを踏む
-  if (!roomUrl) {
-    console.log('⚠️ 通常のブックマーク失敗、フォールバック試行');
-    roomUrl = await bookmarkViaDirectUrl(driver, item);
-  }
-
-  if (!roomUrl) {
-    console.log('❌ ROOMリンク取得失敗');
-    return { status: 'bookmark_failed' };
-  }
-  console.log(`ROOMリンク発見: ${roomUrl}`);
-
+  // 投稿を最大2回トライ（禁止語の自動リトライ含む）
   for (let attempt = 1; attempt <= 2; attempt++) {
     console.log(`紹介文を入力中... (試行 ${attempt}/2)`);
-    const raw = await postToRoom(driver, roomUrl, cleaned);
-    const result = parseApiResult(raw);
+    const postRes = await postToRoom(driver, roomUrl, cleaned);
 
+    if (postRes.status === 'login_required')   return { status: 'login_failed' };
+    if (postRes.status === 'form_not_found')   return { status: 'form_not_found' };
+
+    const result = parseApiResult(postRes.raw);
     if (result.ok) {
       console.log(`✅ 投稿成功: ${item.itemName.substring(0, 40)}`);
       return { status: 'success' };
@@ -549,7 +363,7 @@ async function postItem(driver, item) {
 // main
 // ============================================================
 async function main() {
-  console.log('=== 楽天ROOM自動投稿開始（Selenium版）===');
+  console.log('=== 楽天ROOM自動投稿開始（Selenium版 v5）===');
   console.log('EM:',  CONFIG.EMAIL ? '設定済み' : '未設定');
   console.log('PW:',  CONFIG.PASS  ? '設定済み' : '未設定');
   console.log('SID:', CONFIG.SHEET ? '設定済み' : '未設定');
@@ -561,13 +375,14 @@ async function main() {
 
   const targets = items.slice(0, CONFIG.MAX_ITEMS_PER_RUN);
   const summary = {
-    success: 0, bookmark_failed: 0, room_link_not_found: 0,
-    api_failed: 0, api_failed_final: 0, login_failed: 0,
-    invalid_url: 0, empty_post_text: 0, exception: 0,
+    success: 0, api_failed: 0, api_failed_final: 0,
+    login_failed: 0, form_not_found: 0,
+    invalid_item_code: 0, empty_post_text: 0, exception: 0,
   };
 
   for (const item of targets) {
     console.log(`\n--- 投稿開始: ${(item.itemName || '').substring(0, 40)} ---`);
+    console.log(`itemCode(C列): ${item.itemCode}`);
 
     const driver = createDriver();
     let result = { status: 'unknown' };
@@ -586,12 +401,12 @@ async function main() {
     if (result.status === 'success') {
       await updateStatus(item.rowIndex, '済');
     } else if (
-      result.status === 'invalid_url' ||
+      result.status === 'invalid_item_code' ||
       result.status === 'empty_post_text'
     ) {
       await updateStatus(item.rowIndex, 'スキップ');
     }
-    // bookmark_failed / api_failed 系はスキップ固定しない → 次回リトライ可能
+    // api_failed / login_failed / form_not_found はステータス更新せず次回再試行
 
     await sleep(CONFIG.WAIT_BETWEEN_POSTS_MS);
   }
