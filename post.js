@@ -346,16 +346,22 @@ async function postToRoom(driver, roomUrl, postText) {
 // 成功判定: (1) API応答 (2) URL変化 のどちらかで成功扱い
 // ============================================================
 function judgePostResult(postRes) {
-  // 明示的にAPIエラーを捕捉している場合
+  // 明示的にAPIレスポンスを捕捉している場合
   if (postRes.captured) {
     const http = postRes.captured.status;
     let body = {};
     try { body = JSON.parse(postRes.captured.body || '{}'); } catch (e) {}
+    const message = body.message || '';
 
+    // 2xx かつ status != 'error' → 正常
     if (http >= 200 && http < 300 && body.status !== 'error') {
       return { ok: true, reason: `api_ok (${postRes.captured.source})`, detail: body };
     }
-    return { ok: false, reason: 'api_error', httpStatus: http, message: body.message || '', body };
+    // 「重複操作です」= 既に投稿済み → 成功と同等扱い
+    if (http === 400 && /重複操作/.test(message)) {
+      return { ok: true, reason: 'already_posted', httpStatus: http, message };
+    }
+    return { ok: false, reason: 'api_error', httpStatus: http, message, body };
   }
 
   // API応答を捕捉できなかった場合、URL変化で判定
