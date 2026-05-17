@@ -42,10 +42,10 @@ function sanitizeContent(text) {
 }
 
 // ============================================================
-// 500文字超え時のカット処理（ハッシュタグ行を優先保持）
+// 400文字超え時のカット処理（ハッシュタグ行を優先保持）
 // ============================================================
-function truncateTo490(text) {
-  const LIMIT = 490;
+function truncateTo390(text) {
+  const LIMIT = 390;
   if (!text || text.length <= LIMIT) return text;
 
   console.log(`文字数オーバー: ${text.length}文字 → ${LIMIT}文字にカット`);
@@ -410,7 +410,7 @@ async function postItem(driver, item) {
   if (!cleaned) { console.log('❌ 紹介文が空'); return { status: 'empty_post_text' }; }
 
   // 500文字超えチェック・カット
-  cleaned = truncateTo490(cleaned);
+  cleaned = truncateTo390(cleaned);
 
   console.log('楽天にログイン中...');
   await driver.get('https://my.bookmark.rakuten.co.jp/');
@@ -458,7 +458,7 @@ async function postItem(driver, item) {
 // main
 // ============================================================
 async function main() {
-  console.log('=== 楽天ROOM自動投稿開始（v7: 500文字上限対策版）===');
+  console.log('=== 楽天ROOM自動投稿開始（v8: 400文字以内対策版）===');
   console.log('EM:',  CONFIG.EMAIL ? '設定済み' : '未設定');
   console.log('PW:',  CONFIG.PASS  ? '設定済み' : '未設定');
   console.log('SID:', CONFIG.SHEET ? '設定済み' : '未設定');
