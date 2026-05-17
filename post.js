@@ -11,7 +11,7 @@ const CONFIG = {
   PASS:  process.env.PW,
   SHEET: process.env.SID,
   SHEET_TAB: '楽天ROOM投稿リスト',
-  MAX_ITEMS_PER_RUN: 5,
+  MAX_ITEMS_PER_RUN: 20,
   WAIT_BETWEEN_POSTS_MS: 5000,
 };
 
