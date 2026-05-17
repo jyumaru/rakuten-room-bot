@@ -11,7 +11,7 @@ const CONFIG = {
   PASS:  process.env.PW,
   SHEET: process.env.SID,
   SHEET_TAB: '楽天ROOM投稿リスト',
-  MAX_ITEMS_PER_RUN: 20,
+  MAX_ITEMS_PER_RUN: 5,
   WAIT_BETWEEN_POSTS_MS: 5000,
 };
 
@@ -37,8 +37,40 @@ function sanitizeContent(text) {
       cleaned = cleaned.split(word).join('');
     }
   }
-  cleaned = cleaned.replace(/[ 　]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  cleaned = cleaned.replace(/[ \u3000]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   return { cleaned, hits };
+}
+
+// ============================================================
+// 500文字超え時のカット処理（ハッシュタグ行を優先保持）
+// ============================================================
+function truncateTo490(text) {
+  const LIMIT = 490;
+  if (!text || text.length <= LIMIT) return text;
+
+  console.log(`文字数オーバー: ${text.length}文字 → ${LIMIT}文字にカット`);
+
+  // ハッシュタグ行を分離（#で始まる行）
+  const lines = text.split('\n');
+  const hashtagLineIndex = lines.findIndex(l => l.trim().startsWith('#'));
+
+  if (hashtagLineIndex !== -1) {
+    const hashtagPart = lines.slice(hashtagLineIndex).join('\n');
+    const bodyPart    = lines.slice(0, hashtagLineIndex).join('\n');
+    const bodyLimit   = LIMIT - hashtagPart.length - 1;
+
+    if (bodyLimit > 50) {
+      const trimmedBody = bodyPart.substring(0, bodyLimit).replace(/[、。\s]+$/, '') + '…';
+      const result = trimmedBody + '\n' + hashtagPart;
+      console.log(`カット後: ${result.length}文字`);
+      return result;
+    }
+  }
+
+  // ハッシュタグが見つからない場合は単純カット
+  const result = text.substring(0, LIMIT - 1) + '…';
+  console.log(`カット後: ${result.length}文字`);
+  return result;
 }
 
 function extractBannedFromApiMessage(message) {
@@ -192,7 +224,7 @@ async function performLogin(driver) {
 }
 
 // ============================================================
-// ROOM投稿: XHR + fetch 両方フック、URL変化も判定材料に
+// ROOM投稿
 // ============================================================
 async function postToRoom(driver, roomUrl, postText) {
   console.log(`ROOM投稿ページへ: ${roomUrl}`);
@@ -225,8 +257,8 @@ async function postToRoom(driver, roomUrl, postText) {
   const itemCodeMatch = roomUrl.match(/itemcode=([^&]+)/);
   const itemCode = itemCodeMatch ? decodeURIComponent(itemCodeMatch[1]) : '';
   console.log(`itemCode: ${itemCode}`);
+  console.log(`投稿文字数: ${postText.length}文字`);
 
-  // XHR + fetch 両方フック、collect() 実行、captureを返す
   const apiResultRaw = await driver.executeAsyncScript(`
     const callback = arguments[arguments.length - 1];
     const content = arguments[0];
@@ -234,7 +266,6 @@ async function postToRoom(driver, roomUrl, postText) {
     let captured = null;
     const log = [];
 
-    // fetch フック
     const origFetch = window.fetch;
     window.fetch = async function(url, opts) {
       const res = await origFetch.apply(this, arguments);
@@ -250,7 +281,6 @@ async function postToRoom(driver, roomUrl, postText) {
       return res;
     };
 
-    // XHR フック
     const origXhrOpen = XMLHttpRequest.prototype.open;
     const origXhrSend = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function(method, url) {
@@ -270,7 +300,6 @@ async function postToRoom(driver, roomUrl, postText) {
       return origXhrSend.apply(this, arguments);
     };
 
-    // textareaに入力
     const ta = document.querySelector('#collect-content');
     if (ta) {
       ta.value = content;
@@ -278,7 +307,6 @@ async function postToRoom(driver, roomUrl, postText) {
       ta.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
-    // AngularJS scope から collect() 呼び出し
     let invoked = false;
     try {
       if (typeof angular !== 'undefined') {
@@ -300,7 +328,6 @@ async function postToRoom(driver, roomUrl, postText) {
       log.push('scope error: ' + e.message);
     }
 
-    // collect() 呼び出せなかった時は送信ボタンを探してクリック
     if (!invoked) {
       const candidates = Array.from(document.querySelectorAll('button, input[type="submit"], [ng-click*="collect"]'));
       const submitBtn = candidates.find(b =>
@@ -314,7 +341,6 @@ async function postToRoom(driver, roomUrl, postText) {
       }
     }
 
-    // 捕捉 or タイムアウトまで待つ
     const start = Date.now();
     const timer = setInterval(function() {
       if (captured || Date.now() - start > 18000) {
@@ -343,28 +369,24 @@ async function postToRoom(driver, roomUrl, postText) {
 }
 
 // ============================================================
-// 成功判定: (1) API応答 (2) URL変化 のどちらかで成功扱い
+// 成功判定
 // ============================================================
 function judgePostResult(postRes) {
-  // 明示的にAPIレスポンスを捕捉している場合
   if (postRes.captured) {
     const http = postRes.captured.status;
     let body = {};
     try { body = JSON.parse(postRes.captured.body || '{}'); } catch (e) {}
     const message = body.message || '';
 
-    // 2xx かつ status != 'error' → 正常
     if (http >= 200 && http < 300 && body.status !== 'error') {
       return { ok: true, reason: `api_ok (${postRes.captured.source})`, detail: body };
     }
-    // 「重複操作です」= 既に投稿済み → 成功と同等扱い
     if (http === 400 && /重複操作/.test(message)) {
       return { ok: true, reason: 'already_posted', httpStatus: http, message };
     }
     return { ok: false, reason: 'api_error', httpStatus: http, message, body };
   }
 
-  // API応答を捕捉できなかった場合、URL変化で判定
   const finalUrl = postRes.finalUrl || '';
   if (finalUrl.includes('/mix/collect?') || finalUrl.includes('/collect?itemcode=')) {
     return { ok: true, reason: 'url_changed_to_collect', finalUrl };
@@ -386,6 +408,9 @@ async function postItem(driver, item) {
   let { cleaned, hits } = sanitizeContent(item.postText);
   if (hits.length) console.log(`⚠️ 事前サニタイズ: ${hits.join(', ')} を除去`);
   if (!cleaned) { console.log('❌ 紹介文が空'); return { status: 'empty_post_text' }; }
+
+  // 500文字超えチェック・カット
+  cleaned = truncateTo490(cleaned);
 
   console.log('楽天にログイン中...');
   await driver.get('https://my.bookmark.rakuten.co.jp/');
@@ -411,18 +436,16 @@ async function postItem(driver, item) {
     console.log(`❌ 判定: ${j.reason}`);
     if (j.httpStatus) console.log(`   http=${j.httpStatus} message=${j.message}`);
 
-    // 禁止語エラーならリトライ
     if (j.httpStatus === 400 && /禁止されたキーワード/.test(j.message || '')) {
       const extra = extractBannedFromApiMessage(j.message);
       if (extra.length) {
         console.log(`⚠️ API指摘の禁止語を除去: ${extra.join(', ')}`);
         for (const w of extra) cleaned = cleaned.split(w).join('');
-        cleaned = cleaned.replace(/[ 　]{2,}/g, ' ').trim();
+        cleaned = cleaned.replace(/[ \u3000]{2,}/g, ' ').trim();
         continue;
       }
     }
 
-    // no_evidence の場合も、現実的には投稿されている可能性があるので manual_check として扱う
     if (j.reason === 'no_evidence') {
       return { status: 'manual_check', detail: j };
     }
@@ -435,7 +458,7 @@ async function postItem(driver, item) {
 // main
 // ============================================================
 async function main() {
-  console.log('=== 楽天ROOM自動投稿開始（v6: XHR+fetch+URL三段判定）===');
+  console.log('=== 楽天ROOM自動投稿開始（v7: 500文字上限対策版）===');
   console.log('EM:',  CONFIG.EMAIL ? '設定済み' : '未設定');
   console.log('PW:',  CONFIG.PASS  ? '設定済み' : '未設定');
   console.log('SID:', CONFIG.SHEET ? '設定済み' : '未設定');
@@ -473,8 +496,6 @@ async function main() {
     if (result.status === 'success') {
       await updateStatus(item.rowIndex, '済');
     } else if (result.status === 'manual_check') {
-      // API応答・URL変化のどちらも取れなかったケース
-      // 実際は投稿されている可能性が高いので、重複防止のため「要確認」で記録
       await updateStatus(item.rowIndex, '要確認');
     } else if (
       result.status === 'invalid_item_code' ||
